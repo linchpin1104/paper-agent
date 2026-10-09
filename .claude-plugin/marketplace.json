@@ -1,0 +1,14 @@
+{
+  "name": "lin-papers",
+  "description": "Lin 의 연구 도구 모음",
+  "owner": {
+    "name": "Lin"
+  },
+  "plugins": [
+    {
+      "name": "paper-agent",
+      "source": "./plugins/paper-agent",
+      "description": "SSCI/SCI 사회과학 논문용 문헌 수집·핵심 논문 선정·원문 심층 분석·형광펜 메모 도구"
+    }
+  ]
+}

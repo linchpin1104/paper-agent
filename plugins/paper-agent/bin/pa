@@ -1,0 +1,24 @@
+#!/bin/sh
+# 논문 에이전트 실행기. 처음 쓸 때 파이썬 가상환경을 만들고 패키지를 설치한다.
+#   pa <스크립트.py> [인자...]   예: pa db.py list --project my-topic
+#   pa app                       읽기 화면(Streamlit) 실행
+# 데이터는 지금 폴더(또는 PAPER_AGENT_HOME)의 projects/ 에 쌓인다.
+set -e
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VENV="${PAPER_AGENT_VENV:-$HOME/.paper-agent/venv}"
+BASE="${PAPER_AGENT_BASE_PYTHON:-python3}"
+STAMP="$VENV/.req-$(cksum < "$ROOT/requirements.txt" | cut -d' ' -f1)"
+if [ ! -f "$STAMP" ]; then
+  echo "[논문 에이전트] 처음 실행: 파이썬 패키지를 설치합니다 (1~2분)…" >&2
+  "$BASE" -m venv "$VENV"
+  "$VENV/bin/python" -m pip install -q --upgrade pip >&2
+  "$VENV/bin/python" -m pip install -q -r "$ROOT/requirements.txt" >&2
+  rm -f "$VENV"/.req-* && touch "$STAMP"
+fi
+export PAPER_AGENT_HOME="${PAPER_AGENT_HOME:-$(pwd)}"
+if [ "$1" = "app" ]; then
+  shift
+  exec "$VENV/bin/python" -m streamlit run "$ROOT/app.py" --server.headless true --browser.gatherUsageStats false --client.toolbarMode minimal "$@"
+fi
+SCRIPT="$1"; shift
+exec "$VENV/bin/python" "$ROOT/scripts/$SCRIPT" "$@"
