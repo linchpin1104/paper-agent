@@ -14,6 +14,8 @@ CLI:
   python scripts/db.py pick    --project SLUG --paper ID --tier 리뷰|고전|최전선|직결 --reason "고른 이유 1문장"
   python scripts/db.py unpick  --project SLUG --paper ID
   python scripts/db.py reading --project SLUG              # 읽을 목록 제안 보기
+  python scripts/db.py role    --project SLUG --paper ID --role 차별화 대상 --content "쓰임·차이 1문장"   # 내 논문에서의 역할. --role 없음 = 지우기
+  python scripts/db.py checkup --project SLUG              # 문헌 목록 점검: 연도·국내·역할 빈칸
   python scripts/db.py clear --project SLUG --paper ID                 # 그 논문의 노트·변수·가설 삭제 (재분석 전)
 """
 import argparse, datetime, json, os, pathlib, re, sqlite3, sys
@@ -41,7 +43,9 @@ ROLES = ["IV", "DV", "MED", "MOD", "CTRL", "기타"]  # 독립·종속·매개·
 PAPER_EXTRA = [("tier", "TEXT"), ("reason", "TEXT"), ("local_cites", "INTEGER"), ("core_links", "INTEGER"),
                ("is_review", "INTEGER"),
                # 검토: 사람이 원문을 보고 확인한 결과. title_check 는 PDF 첫 쪽에 기록된 제목이 있는지 자동 검사
-               ("review", "TEXT"), ("review_note", "TEXT"), ("reviewed_at", "TEXT"), ("title_check", "TEXT")]
+               ("review", "TEXT"), ("review_note", "TEXT"), ("reviewed_at", "TEXT"), ("title_check", "TEXT"),
+               # 내 논문에서 이 논문이 맡는 역할(KEY_ROLES)과 그 쓰임·차이 한 줄
+               ("key_role", "TEXT"), ("key_role_note", "TEXT")]
 # 인용 관계 검증: 기록한 출처 목록, 검증 단계, 근거(원문 쪽·문구)
 EDGE_EXTRA = [("sources", "TEXT"), ("verified", "TEXT"), ("evidence", "TEXT")]
 NOTE_EXTRA = [("quote_ok", "INTEGER"), ("checked", "INTEGER")]
@@ -49,6 +53,13 @@ REVIEW = ["미검토", "원문 확인함", "문제 있음"]
 # 인용 검증 단계 (낮은 → 높은). miss = 원문이 있는데 참고문헌에서 못 찾음 → 사람 확인 필요
 VERIFY = {"db1": "DB 1곳 기록", "db2": "DB 2곳 일치", "miss": "원문에서 못 찾음", "text": "원문 참고문헌 확인", "human": "사람 확인"}
 TIERS = ["리뷰", "고전", "최전선", "직결"]
+# 묶음(TIERS)은 논문의 종류, 역할은 내 논문 안에서의 쓰임. 키논문은 '무엇을'(이론)과 '어떻게'(방법)가 따로 있다
+KEY_ROLES = {"이론 앵커": "내 연구가 검증·확장·형식화하는 이론의 원전",
+             "방법 선례": "같은 방법·연구 전략을 쓴 논문. 방법 장의 근거",
+             "현상 선례": "같은 현상을 다른 맥락이나 방법으로 다룬 논문",
+             "차별화 대상": "내 질문과 가장 가까운 선행연구. 반드시 인용하고 차이를 밝힌다",
+             "배경": "개념 정의·맥락·통계 근거"}
+MUST_ROLES = ["이론 앵커", "방법 선례", "차별화 대상"]  # 비어 있으면 심사에서 바로 지적되는 역할
 STATUSES = ["candidate", "shortlist", "fulltext", "analyzed", "rejected"]
 
 SCHEMA = """
@@ -115,7 +126,8 @@ def connect_dir(d):
     (d / "pdf").mkdir(exist_ok=True)
     (d / "gaps").mkdir(exist_ok=True)
     (d / "export").mkdir(exist_ok=True)
-    con = sqlite3.connect(d / "library.db")
+    # 화면(Streamlit)의 버튼 콜백은 앞선 실행에서 연 연결을 다른 스레드에서 쓴다. 한 번에 한 스레드만 쓰므로 안전
+    con = sqlite3.connect(d / "library.db", check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
     for table, extra in (("papers", PAPER_EXTRA), ("edges", EDGE_EXTRA), ("notes", NOTE_EXTRA)):
@@ -213,13 +225,40 @@ def log_hits(con, pids, query):
     con.executemany("INSERT OR IGNORE INTO hits(paper_id, query) VALUES(?,?)", [(p, query) for p in pids if p])
 
 
+def checkup(con):
+    """읽을 목록(★·읽을 목록·원문·분석·제안·역할 지정) 점검. 경고 문장 목록과 집계를 돌려준다."""
+    rows = con.execute("SELECT id, title, year, venue, key_role, key_role_note FROM papers WHERE favorite=1 "
+                       "OR status IN ('shortlist','fulltext','analyzed') OR tier IS NOT NULL OR key_role IS NOT NULL").fetchall()
+    this = datetime.date.today().year
+    bins = {"~2000": 0, "2001–10": 0, "2011–15": 0, "2016–20": 0, f"2021–{this % 100}": 0}
+    for r in rows:
+        y = r["year"] or 0
+        k = "~2000" if y <= 2000 else "2001–10" if y <= 2010 else "2011–15" if y <= 2015 else "2016–20" if y <= 2020 else list(bins)[-1]
+        bins[k] += 1
+    recent = sum(1 for r in rows if (r["year"] or 0) >= this - 5)
+    ko = sum(1 for r in rows if re.search("[가-힣]", (r["title"] or "") + (r["venue"] or "")))
+    roles = {k: [r for r in rows if r["key_role"] == k] for k in KEY_ROLES}
+    warn = []
+    if rows and not recent:
+        warn.append(f"최근 5년({this - 5}년 이후) 논문이 없습니다. 최신 연구를 모르고 썼다는 지적을 받기 쉽습니다.")
+    if rows and not ko:
+        warn.append("국내 논문이 없습니다. 국내 학술지에 낸다면 반드시 지적됩니다.")
+    for k in MUST_ROLES:
+        if not roles[k]:
+            warn.append(f"'{k}' 역할 논문이 없습니다 — {KEY_ROLES[k]}.")
+    for r in roles["차별화 대상"]:
+        if not r["key_role_note"]:
+            warn.append(f"차별화 대상 #{r['id']} 에 '이 논문과 무엇이 다른가' 한 줄이 없습니다.")
+    return {"n": len(rows), "years": bins, "recent": recent, "ko": ko, "roles": roles, "warn": warn}
+
+
 def log_search(con, source, query, n):
     con.execute("INSERT INTO searches(source,query,run_at,n) VALUES(?,?,?,?)", (source, query, now(), n))
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["init", "list", "text", "note", "notes", "var", "hyp", "outline", "flow", "memos", "pick", "unpick", "reading", "clear"])
+    ap.add_argument("cmd", choices=["init", "list", "text", "note", "notes", "var", "hyp", "outline", "flow", "memos", "pick", "unpick", "reading", "clear", "role", "checkup"])
     ap.add_argument("--project", required=True)
     ap.add_argument("--paper", type=int)
     ap.add_argument("--status")
@@ -234,7 +273,7 @@ def main():
     ap.add_argument("--end", type=int)
     a = ap.parse_args()
     con = connect(a.project)
-    if a.cmd in ("note", "var", "hyp", "outline", "flow", "notes", "text", "clear", "pick", "unpick") and not a.paper:
+    if a.cmd in ("note", "var", "hyp", "outline", "flow", "notes", "text", "clear", "pick", "unpick", "role") and not a.paper:
         sys.exit("--paper 필요")
     if a.cmd == "init":
         print("ok", project_dir(a.project) / "library.db")
@@ -305,6 +344,23 @@ def main():
             print(f"\n[{t}] {len(rows)}편")
             for r in rows:
                 print(f"  #{r['id']} {r['year']} {r['title'][:80]} — {r['venue'] or ''} (후보 인용 {r['local_cites'] or 0})\n     {r['reason']}")
+    elif a.cmd == "role":
+        if a.role != "없음" and a.role not in KEY_ROLES:
+            sys.exit(f"--role 은 {list(KEY_ROLES)} 또는 '없음'")
+        con.execute("UPDATE papers SET key_role=?, key_role_note=? WHERE id=?",
+                    (None, None, a.paper) if a.role == "없음" else (a.role, a.content, a.paper))
+        print("ok")
+    elif a.cmd == "checkup":
+        c = checkup(con)
+        print(f"읽을 목록 {c['n']}편 · 최근 5년 {c['recent']} · 국내 {c['ko']}")
+        print("연도: " + " · ".join(f"{k} {v}" for k, v in c["years"].items()))
+        for k, rs in c["roles"].items():
+            print(f"\n[{k}] {len(rs)}편 — {KEY_ROLES[k]}")
+            for r in rs:
+                print(f"  #{r['id']} {r['year']} {r['title'][:80]}\n     {r['key_role_note'] or '(메모 없음)'}")
+        print("\n점검:" if c["warn"] else "\n점검: 빈칸 없음")
+        for w in c["warn"]:
+            print("  ⚠ " + w)
     elif a.cmd == "memos":
         q = "SELECT m.*, p.title FROM memos m JOIN papers p ON p.id=m.paper_id"
         rows = con.execute(q + " WHERE m.paper_id=? ORDER BY m.page, m.id", (a.paper,)) if a.paper else con.execute(q + " ORDER BY m.paper_id, m.page")

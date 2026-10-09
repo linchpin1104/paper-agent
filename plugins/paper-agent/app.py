@@ -796,6 +796,21 @@ def set_note_checked(nid):
     con.commit()
 
 
+def role_box(pid, p):
+    """내 논문에서 이 논문이 맡는 역할. 묶음(리뷰·고전…)과 달리 쓰임을 정한다."""
+    def save():
+        r, note = st.session_state.get(f"kr{pid}"), st.session_state.get(f"krn{pid}", "").strip()
+        con.execute("UPDATE papers SET key_role=?, key_role_note=? WHERE id=?", (r, (note or None) if r else None, pid))
+        con.commit()
+    if f"krn{pid}" not in st.session_state:
+        st.session_state[f"krn{pid}"] = p["key_role_note"] or ""
+    r = st.pills("내 논문에서의 역할", list(db.KEY_ROLES), default=p["key_role"], key=f"kr{pid}", on_change=save,
+                 help="\n".join(f"- **{k}**: {v}" for k, v in db.KEY_ROLES.items()))
+    if r:  # 역할을 골랐을 때만 한 줄 메모
+        st.text_input("쓰임·차이 한 줄", key=f"krn{pid}", on_change=save, label_visibility="collapsed",
+                      placeholder="이 논문과 내 연구는 무엇이 다른가" if r == "차별화 대상" else f"{r}: 내 논문 어디에 어떻게 쓰나")
+
+
 def review_box(pid, p):
     """사람 검토: 진위 체크 + 검토 결과 + 인용 관계 확인."""
     label = p["review"] or "미검토"
@@ -980,6 +995,7 @@ if sec == "읽기":
         link = library_link(p["doi"], p["url"])
         st.markdown(f"#### {p['title']}\n{p['authors'] or ''} · {p['year']} · *{p['venue'] or ''}* · 인용 {p['cited_by']}"
                     + (f" · [원문 페이지]({link})" if link else ""))
+        role_box(pid, p)
         review_box(pid, p)
         ft = con.execute("SELECT pages FROM fulltext WHERE paper_id=?", (pid,)).fetchone()
         if not ft:
@@ -1010,6 +1026,19 @@ if sec == "읽기":
 
 # ── 모아보기 ─────────────────────────────────────────────
 if sec == "모아보기":
+    st.subheader("문헌 점검")
+    ck = db.checkup(con)
+    if not ck["n"]:
+        st.caption("읽을 목록이 생기면 연도·국내 문헌·키논문 역할의 빈칸을 여기서 점검합니다.")
+    else:
+        st.caption(f"읽을 목록 {ck['n']}편 · 최근 5년 {ck['recent']}편 · 국내 {ck['ko']}편 · 연도 "
+                   + " · ".join(f"{k} {v}" for k, v in ck["years"].items()))
+        for w in ck["warn"]:
+            st.warning(w, icon="⚠️")
+        st.dataframe([{"역할": k, "편수": len(rs), "논문": " / ".join(f"#{r['id']} {(r['title'] or '')[:40]}" for r in rs) or "—",
+                       "뜻": db.KEY_ROLES[k]} for k, rs in ck["roles"].items()], hide_index=True, width="stretch")
+        st.caption("역할은 읽기 탭 제목 아래에서 정합니다. 가장 가까운 선행연구 찾기는 Claude 에게 `/paper-agent:start 차별화` 를 입력하세요.")
+    st.divider()
     st.subheader("내 메모")
     colors = st.pills("표시", list(db.MEMO_COLORS), selection_mode="multi", default=list(db.MEMO_COLORS), key="mm_colors")
     allm = [m for m in con.execute("SELECT m.*, p.title FROM memos m JOIN papers p ON p.id=m.paper_id ORDER BY m.paper_id, m.page, m.id")
@@ -1051,9 +1080,13 @@ BRIEF_FIELDS = [
     ("지도교수 지침", "받은 방향이 있으면"),
     ("목표 노트 수", "분석할 논문 수 목표"),
 ]
+BRIEF_WATCH = ["연구 주제", "연구 유형", "주제 씨앗", "이론 후보"]  # 바뀌면 읽을 목록을 다시 나눠야 하는 칸
 BRIEF_SYS = """당신은 사회과학(SSCI/SCI) 논문을 준비하는 연구자의 연구 주제 정리를 돕는 지도 선배입니다.
 사용자는 생각이 덜 정리된 채로 대충 말합니다. 대화하면서 연구 주제 칸을 채워 갑니다.
 - 한국어 존댓말. 답은 짧게. 한 번에 질문은 1~2개만, 고르기 쉽게 예시를 붙입니다.
+- 쉬운 말로 씁니다. 전문용어를 꼭 써야 하면 괄호 안에 쉬운 말로 풀어 줍니다.
+- 사용자의 말을 다른 뜻으로 바꿔 읽지 않습니다. 뜻이 둘 이상으로 읽히는 말(예: '미션'이 사회적 미션인지 회사 미션인지)은
+  칸을 채우기 전에 먼저 어느 뜻인지 묻습니다. 받칠 문헌이 많다는 이유로 주제를 옆으로 옮기지 않습니다.
 - 사용자의 말에서 알 수 있는 칸은 바로 채우고, 추측으로 채운 것은 reply 에서 '이렇게 넣어봤다'고 알립니다.
 - 주제 씨앗은 학술 DB 검색에 쓸 영문 키워드 5~10개(쉼표 구분), 국문 키워드는 국내 DB 검색용.
   첫 키워드는 연구의 중심 개념이나 방법으로 둡니다. 첫 키워드와 다음 키워드들을 묶은 교차 검색이 자동으로 돕니다.
@@ -1092,9 +1125,21 @@ if sec == "연구 주제 설정":
     hints = dict(BRIEF_FIELDS)
     fk = lambda k: f"bf_{slug}_{k}"  # noqa: E731  칸 위젯 key
 
-    def save_brief():
+    def save_brief(how):
         v = lambda k: " ".join(st.session_state[fk(k)].split())  # noqa: E731
+        old = db.read_brief(slug)
+        old["연구 주제"] = bf.read_text().splitlines()[0].lstrip("# ").strip()
         bf.write_text(f"# {v('연구 주제')}\n" + "".join(f"- {k}: {v(k)}\n" for k, _ in BRIEF_FIELDS))
+        # 연구 방향이 바뀌면 결정 기록에 남기고, 이미 고른 문헌을 다시 나누라고 알린다
+        blank = lambda x: not x or x.startswith(("(", "{")) or x == dict(BRIEF_FIELDS).get("연구 유형")  # noqa: E731
+        changed = [(k, old.get(k, "")) for k in BRIEF_WATCH if not blank(old.get(k, "")) and old.get(k, "") != v(k)]
+        if changed:
+            cell = lambda x: x.replace("|", "/")  # noqa: E731
+            with (db.HOME / "projects" / slug / "decisions.md").open("a") as f:
+                for k, was in changed:
+                    f.write(f"| {db.now()[:10]} | 연구 방향 변경 — {k}: {cell(v(k))} | 화면 연구 주제 설정({how}) | {cell(was)} |\n")
+            if con.execute("SELECT 1 FROM papers WHERE tier IS NOT NULL OR key_role IS NOT NULL LIMIT 1").fetchone():
+                st.session_state[f"redir_{slug}"] = [k for k, _ in changed]
     if fk("연구 주제") not in st.session_state:  # 처음 열 때 brief.md 값으로. 템플릿 자리표시는 빈칸
         st.session_state[fk("연구 주제")] = "" if title.startswith("{") else title
         for k, hint in BRIEF_FIELDS:
@@ -1131,7 +1176,7 @@ if sec == "연구 주제 설정":
             for k, v in fields.items():  # 칸 위젯이 그려지기 전이라 바로 바꿀 수 있다
                 st.session_state[fk(k)] = v
             if fields:
-                save_brief()  # 대화로 채운 칸은 바로 저장
+                save_brief("대화")  # 대화로 채운 칸은 바로 저장
             st.rerun()
         if history and st.button("대화 처음부터", type="tertiary"):
             chat_f.unlink()
@@ -1146,5 +1191,11 @@ if sec == "연구 주제 설정":
                 (st.text_area if k in ("주제 씨앗", "국문 키워드", "지도교수 지침") else st.text_input)(
                     k, key=fk(k), help=hint, placeholder=hint)
             if st.form_submit_button("저장", type="primary"):
-                save_brief()
+                save_brief("직접 수정")
                 st.success("저장했습니다. 다음 검색부터 반영됩니다.")
+        if st.session_state.get(f"redir_{slug}"):
+            st.info(f"연구 방향이 바뀌었습니다 ({', '.join(st.session_state[f'redir_{slug}'])}). 결정 기록에 남겼습니다. "
+                    "이미 고른 읽을 목록·키논문 역할이 새 방향에 맞는지 다시 나누려면 Claude 에게 "
+                    "`/paper-agent:start 재분류` 를 입력하세요. 빠질 것·남을 것·새로 찾을 것을 표로 보여줍니다.")
+            st.button("알겠습니다", key=f"redir_ok_{slug}", type="tertiary",
+                      on_click=lambda: st.session_state.pop(f"redir_{slug}", None))

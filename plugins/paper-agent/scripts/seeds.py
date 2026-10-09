@@ -1,5 +1,6 @@
 """핵심 논문(★)에서 출발하는 연관 논문 찾기.
   python scripts/seeds.py find   --project SLUG --query "제목 또는 DOI"   # 후보 3개와 일치도. 사람이 맞는 것을 고른다
+  python scripts/seeds.py probe  --project SLUG --query "주제어 조합" [--top 15]   # 주제 검색 결과를 초록과 함께 보기만 (저장 안 함). 가장 가까운 선행연구 찾기용
   python scripts/seeds.py add    --project SLUG --openalex W123456          # 고른 후보를 핵심 논문으로 등록
   python scripts/seeds.py expand --project SLUG                             # 참고문헌·피인용·유사·추천 수집 → 인용 검증 → 순위
   python scripts/seeds.py rank   --project SLUG [--top 40]                  # 연관 논문 순위만 다시 보기
@@ -77,7 +78,7 @@ def rank(con, top=40):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["find", "add", "expand", "rank"])
+    ap.add_argument("cmd", choices=["find", "probe", "add", "expand", "rank"])
     ap.add_argument("--project", required=True)
     ap.add_argument("--query")
     ap.add_argument("--openalex")
@@ -87,6 +88,11 @@ def main():
     if a.cmd == "find":
         for c in find(a.query):
             print(f"{c['openalex']} 일치 {c['match']} | {c['year']} {c['title']} — {c['authors'][:60]} · {c['venue'] or ''} · {c['doi'] or 'DOI 없음'}")
+    elif a.cmd == "probe":
+        clean = re.sub(r"[,:;()\[\]\"?!|]", " ", a.query or "")
+        for w in (oa.get("/works", search=clean, per_page=min(a.top, 50)) or {}).get("results", []):
+            r = oa.rec(w)
+            print(f"{oa.oid(w)} | {r['year']} {r['title']} — {r['venue'] or ''} · 인용 {r['cited_by']}\n    {(r['abstract'] or '(초록 없음)')[:400]}\n")
     elif a.cmd == "add":
         pid = add(con, a.openalex)
         print(f"★ #{pid}" if pid else "못 찾음")

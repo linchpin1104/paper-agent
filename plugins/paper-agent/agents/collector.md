@@ -31,6 +31,7 @@ model: claude-opus-5-5
 | 아는 논문 등록 | `pa fetch_openalex.py add --query "제목 또는 DOI"` → ★ 로 등록. 찾은 논문이 맞는지(저자·연도) 사용자에게 확인 |
 | 핵심 논문 후보 | `pa keypapers.py run` → 리뷰·고전·최전선·직결 네 묶음 후보와 지표 출력 |
 | 읽을 목록 제안 | 초록을 읽고 `pa db.py pick --paper ID --tier 리뷰|고전|최전선|직결 --reason "1문장"` · 확인 `pa db.py reading` |
+| 역할 지정 | `pa db.py role --paper ID --role 이론 앵커|방법 선례|현상 선례|차별화 대상|배경 --content "쓰임·차이 1문장"` · 점검 `pa db.py checkup` |
 | ★ 확장 | `pa fetch_openalex.py related` · `pa fetch_s2.py related` |
 | 원문 | `pa fulltext.py fetch` (shortlist OA 자동) · `fulltext.py missing` (못 받은 목록) |
 | 원문 등록 | `pa fulltext.py attach --paper ID --file X.pdf` |
