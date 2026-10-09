@@ -147,16 +147,25 @@ if mode == "학회지 구독":
     st.stop()
 
 c1, c2 = top_r.columns([3, 2], vertical_alignment="center")
-slug = c1.selectbox("프로젝트", projects, label_visibility="collapsed",
+if "made" in st.session_state:  # 방금 만든 프로젝트를 바로 고른 상태로
+    st.session_state["slug"] = st.session_state.pop("made")
+    st.session_state["sec"] = "연구 주제 설정"  # 다음 할 일: 주제·키워드 채우기
+slug = c1.selectbox("프로젝트", projects, key="slug", label_visibility="collapsed",
                     placeholder="프로젝트를 만드세요") if projects else None
 with c2.popover("새 프로젝트", width="stretch"):
-    new = st.text_input("영문 약칭 (예: women-founders)")
-    if st.button("만들기") and re.fullmatch(r"[a-z0-9-]+", new or ""):
+    new = st.text_input("영문 약칭 (예: women-founders)").strip().lower().replace(" ", "-")
+    if st.button("만들기"):
         d = db.HOME / "projects" / new
-        d.mkdir(parents=True, exist_ok=False)
-        shutil.copy(ROOT / "templates/brief.md", d / "brief.md")
-        shutil.copy(ROOT / "templates/decisions.md", d / "decisions.md")
-        st.success("만들었습니다. 위에서 고른 뒤 '연구 주제 설정' 탭에서 주제와 키워드를 채우세요.")
+        if not re.fullmatch(r"[a-z0-9-]+", new):
+            st.error("영문 소문자·숫자·하이픈(-)만 쓸 수 있습니다.")
+        elif (d / "brief.md").exists():
+            st.error(f"'{new}' 프로젝트가 이미 있습니다.")
+        else:
+            d.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / "templates/brief.md", d / "brief.md")
+            shutil.copy(ROOT / "templates/decisions.md", d / "decisions.md")
+            st.session_state["made"] = new
+            st.rerun()
 if not slug:
     st.info("오른쪽 위 '새 프로젝트'로 연구 프로젝트를 만드세요.")
     st.stop()
