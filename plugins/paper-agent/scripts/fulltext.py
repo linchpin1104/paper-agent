@@ -118,7 +118,8 @@ def fetch(con, slug, status, paper):
                     break
             except Exception as e:  # 개별 링크 실패는 다음 링크로
                 print(f"  #{r['id']} 실패 {type(e).__name__}: {u[:80]}")
-                blocked.append(u)
+                if getattr(e, "code", None) == 403:  # 403 = 사이트가 프로그램 접속을 막음. 404 등 죽은 링크는 남기지 않는다
+                    blocked.append(u)
             time.sleep(0.5)
         else:
             if blocked and not r["oa_url"]:  # 무료 원문은 있는데 사이트가 프로그램 접속을 막은 경우: 화면에서 직접 열도록 남긴다
