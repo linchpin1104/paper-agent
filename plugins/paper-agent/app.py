@@ -11,6 +11,7 @@ import figures  # noqa: E402
 import seeds as seedmod  # noqa: E402
 import verify  # noqa: E402
 import journals as jmod  # noqa: E402
+from fulltext import library_link  # noqa: E402
 import fetch_openalex  # noqa: E402
 
 st.set_page_config(page_title="논문 에이전트", layout="wide", initial_sidebar_state="expanded")
@@ -489,6 +490,24 @@ def paper_list():
                     "section[data-testid=stSidebar] [data-testid=stVerticalBlock]{gap:.15rem}"
                     "section[data-testid=stSidebar] [data-testid=stCaptionContainer]{margin:.9rem 0 .2rem .5rem}</style>", unsafe_allow_html=True)
         st.markdown("**논문**")
+        nopdf = sum(r["status"] not in groups for r in rows)
+        with st.expander(f"원문 모으기 · 없음 {nopdf}편", expanded=nopdf > 0 and nopdf == len(rows)):
+            if st.button("무료 원문 자동으로 받기", width="stretch",
+                         help="OpenAlex·Unpaywall·Semantic Scholar 가 아는 무료 원문(저자 홈페이지·기관 저장소·arXiv 등)"):
+                run("scripts/fulltext.py", "fetch", *P)
+                st.rerun()
+            st.caption("유료 논문은 도서관에서 받아 여기에 한꺼번에 끌어다 놓으세요. DOI·제목으로 어느 논문인지 맞춰 붙입니다.")
+            ups = st.file_uploader("PDF 여러 개", type="pdf", accept_multiple_files=True, key="bulk_pdf",
+                                   label_visibility="collapsed")
+            if ups and st.button(f"{len(ups)}개 등록", width="stretch"):
+                tmp = db.HOME / "projects" / slug / "export" / "_upload"
+                tmp.mkdir(exist_ok=True)
+                files = []
+                for f in ups:
+                    (tmp / f.name).write_bytes(f.getvalue())
+                    files.append(str(tmp / f.name))
+                run("scripts/fulltext.py", "attach", *P, "--file", *files)
+                shutil.rmtree(tmp, ignore_errors=True)
         q = st.text_input("찾기", key="rd_q", placeholder="제목·저자", label_visibility="collapsed").lower()
         shown = [r for r in rows if not q or q in (r["title"] + " " + (r["authors"] or "")).lower()]
         if not shown:
@@ -509,7 +528,7 @@ def paper_list():
                 continue
             st.caption(f"{groups.get(g, '원문 없음')} {len(items)}")
             for r in items:
-                st.button(label(r), key=f"rd_{r['id']}", help=r["title"], on_click=pick, args=(r["id"],),
+                st.button(label(r), key=f"rd_{r['id']}", on_click=pick, args=(r["id"],),
                           type="secondary" if r["id"] == st.session_state["rd"] else "tertiary")
         if any(r["favorite"] for r in shown):
             st.caption("★ 핵심 논문")
@@ -872,13 +891,17 @@ if sec == "읽기":
         st.info("'찾기'에서 읽을 논문을 읽을 목록에 넣으면 여기 왼쪽 목록에 나옵니다.")
     else:
         p = con.execute("SELECT * FROM papers WHERE id=?", (pid,)).fetchone()
-        link = f"https://doi.org/{p['doi']}" if p["doi"] else p["url"]
+        link = library_link(p["doi"], p["url"])
         st.markdown(f"#### {p['title']}\n{p['authors'] or ''} · {p['year']} · *{p['venue'] or ''}* · 인용 {p['cited_by']}"
                     + (f" · [원문 페이지]({link})" if link else ""))
         review_box(pid, p)
         ft = con.execute("SELECT pages FROM fulltext WHERE paper_id=?", (pid,)).fetchone()
         if not ft:
-            st.warning("원문 없음. 도서관에서 받은 PDF 를 올리세요.")
+            if p["oa_url"]:
+                st.info(f"무료 공개 원문이 있습니다. 자동 다운로드는 사이트가 막아서, [여기]({p['oa_url']})를 평소 브라우저에서 열어 받은 뒤 올리세요.")
+            st.warning("원문 없음. 위 '원문 페이지'를 **평소 쓰는 브라우저**(학교 계정으로 로그인한 Chrome 등)에서 열어 PDF 를 받은 뒤 올리세요. "
+                       "자동화 브라우저에서 열면 출판사가 접속을 막을 수 있습니다."
+                       + ("" if db.load_env().get("LIBRARY_PROXY") else " .env 에 LIBRARY_PROXY(학교 도서관 원격접속 주소)를 넣으면 링크가 도서관을 거쳐 열립니다."))
             f = st.file_uploader("PDF", type="pdf", key=f"pdf{pid}")
             if f and st.button("등록"):
                 tmp = db.HOME / "projects" / slug / "export" / "_upload.pdf"

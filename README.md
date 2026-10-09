@@ -74,6 +74,7 @@ claude plugin update paper-agent@lin-papers
 | `CONTACT_EMAIL` | Unpaywall 로 무료 원문을 더 찾음 |
 | `S2_API_KEY` | Semantic Scholar 요청 한도 해제 |
 | `DBPIA_API_KEY` | 국내 논문(DBpia) 검색 |
+| `LIBRARY_PROXY` | 원문 링크를 학교 도서관 원격접속으로 열기 (유료 논문 PDF 받기). 값은 도서관 안내의 프록시 주소 앞부분 |
 
 ## 저작권
 
