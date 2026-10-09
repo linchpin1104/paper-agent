@@ -176,8 +176,8 @@ cnt = dict(con.execute("SELECT status, COUNT(*) FROM papers GROUP BY status").fe
 n_memo = con.execute("SELECT COUNT(*) FROM memos").fetchone()[0]
 s1, s2 = st.columns([3, 2], vertical_alignment="center")
 s2.markdown("<div style='text-align:right;font-size:.8rem;opacity:.6'>"
-            + " · ".join(f"{STATUS_KO.get(k, k)} {v}" for k, v in cnt.items() if k != "candidate")
-            + f" · 후보 {cnt.get('candidate', 0)} · 내 메모 {n_memo}</div>", unsafe_allow_html=True)
+            + " · ".join([f"{STATUS_KO.get(k, k)} {v}" for k, v in cnt.items() if k != "candidate"]
+                         + [f"후보 {cnt.get('candidate', 0)}", f"내 메모 {n_memo}"]) + "</div>", unsafe_allow_html=True)
 
 sec = s1.segmented_control("화면", ["찾기", "읽기", "모아보기", "연구 주제 설정"], default="찾기",
                            key="sec", label_visibility="collapsed") or "찾기"
@@ -879,18 +879,97 @@ BRIEF_FIELDS = [
     ("지도교수 지침", "받은 방향이 있으면"),
     ("목표 노트 수", "분석할 논문 수 목표"),
 ]
+BRIEF_SYS = """당신은 사회과학(SSCI/SCI) 논문을 준비하는 연구자의 연구 주제 정리를 돕는 지도 선배입니다.
+사용자는 생각이 덜 정리된 채로 대충 말합니다. 대화하면서 연구 주제 칸을 채워 갑니다.
+- 한국어 존댓말. 답은 짧게. 한 번에 질문은 1~2개만, 고르기 쉽게 예시를 붙입니다.
+- 사용자의 말에서 알 수 있는 칸은 바로 채우고, 추측으로 채운 것은 reply 에서 '이렇게 넣어봤다'고 알립니다.
+- 주제 씨앗은 학술 DB 검색에 쓸 영문 키워드 5~10개(쉼표 구분), 국문 키워드는 국내 DB 검색용.
+- fields 에는 이번에 새로 채우거나 고칠 칸만 넣습니다. 바꿀 게 없으면 빈 객체.
+- 칸이 거의 다 찼으면 '찾기' 탭에서 핵심 논문을 정하러 가자고 안내합니다."""
+
+
+def brief_chat(history, cur):
+    """대화 기록과 지금 칸 값을 Claude(사용자 구독의 claude CLI)에 넘겨 답과 칸 제안을 받는다."""
+    keys = ["연구 주제"] + [k for k, _ in BRIEF_FIELDS]
+    schema = {"type": "object", "required": ["reply", "fields"], "properties": {
+        "reply": {"type": "string"},
+        "fields": {"type": "object", "additionalProperties": False, "properties": {k: {"type": "string"} for k in keys}}}}
+    talk = "\n".join(f"{'사용자' if m['role'] == 'user' else '나'}: {m['content']}" for m in history)
+    prompt = f"지금 칸 값:\n{json.dumps(cur, ensure_ascii=False)}\n\n대화:\n{talk}"
+    try:
+        r = subprocess.run(["claude", "-p", prompt, "--system-prompt", BRIEF_SYS, "--tools", "",
+                            "--no-session-persistence", "--model", "sonnet", "--output-format", "json",
+                            "--json-schema", json.dumps(schema, ensure_ascii=False)],
+                           capture_output=True, text=True, timeout=180)
+        out = json.loads(r.stdout)["structured_output"]
+        return out["reply"], {k: v for k, v in out["fields"].items() if k in keys}
+    except FileNotFoundError:
+        return "claude 명령을 찾지 못했습니다. Claude Code 가 설치된 컴퓨터에서 화면을 여세요.", {}
+    except Exception as e:  # 시간 초과·로그인 만료 등
+        return f"답을 받지 못했습니다. 잠시 뒤 다시 보내 주세요. ({type(e).__name__})", {}
+
+
 if sec == "연구 주제 설정":
-    st.caption("에이전트가 논문을 검색하고 분석할 때 기준으로 쓰는 연구 주제 정보입니다.")
     bf = db.HOME / "projects" / slug / "brief.md"
+    chat_f = db.HOME / "projects" / slug / "brief_chat.json"
     title = bf.read_text().splitlines()[0].lstrip("# ").strip()
     cur = db.read_brief(slug)
-    with st.form("brief"):
-        new_title = st.text_input("연구 주제 (한 줄)", title)
-        vals = {}
+    hints = dict(BRIEF_FIELDS)
+    fk = lambda k: f"bf_{slug}_{k}"  # noqa: E731  칸 위젯 key
+
+    def save_brief():
+        v = lambda k: " ".join(st.session_state[fk(k)].split())  # noqa: E731
+        bf.write_text(f"# {v('연구 주제')}\n" + "".join(f"- {k}: {v(k)}\n" for k, _ in BRIEF_FIELDS))
+    if fk("연구 주제") not in st.session_state:  # 처음 열 때 brief.md 값으로. 템플릿 자리표시는 빈칸
+        st.session_state[fk("연구 주제")] = "" if title.startswith("{") else title
         for k, hint in BRIEF_FIELDS:
             v = cur.get(k, "")
-            v = "" if v.startswith("(") else v
-            vals[k] = (st.text_area if k in ("주제 씨앗", "국문 키워드", "지도교수 지침") else st.text_input)(k, v, help=hint, placeholder=hint)
-        if st.form_submit_button("저장", type="primary"):
-            bf.write_text(f"# {new_title}\n" + "".join(f"- {k}: {' '.join(vals[k].split())}\n" for k, _ in BRIEF_FIELDS))
-            st.success("저장했습니다. 다음 검색부터 반영됩니다.")
+            st.session_state[fk(k)] = "" if v.startswith("(") or v == hint else v
+    history = json.loads(chat_f.read_text()) if chat_f.exists() else []
+
+    talk, form = st.columns([1, 1], gap="large")
+    with talk:
+        st.markdown("**대화로 정하기**")
+        box = st.container(height=560)
+        with box:
+            with st.chat_message("assistant"):
+                st.markdown("어떤 게 궁금하신지 편하게 말씀해 주세요. 정리가 안 됐어도 괜찮습니다. "
+                            "예: *'애 키우면서 창업한 엄마들이 왜 그만두는지 궁금해요'*\n\n"
+                            "이야기하면서 오른쪽 칸을 같이 채워 가겠습니다.")
+            for m in history:
+                with st.chat_message(m["role"]):
+                    st.markdown(m["content"])
+        msg = st.chat_input("생각나는 대로 적어 주세요")
+        if msg:
+            history.append({"role": "user", "content": msg})
+            with box:
+                with st.chat_message("user"):
+                    st.markdown(msg)
+                with st.chat_message("assistant"), st.spinner("생각하는 중… (10~30초)"):
+                    now = {"연구 주제": st.session_state[fk("연구 주제")],
+                           **{k: st.session_state[fk(k)] for k, _ in BRIEF_FIELDS}}
+                    reply, fields = brief_chat(history, now)
+            if fields:
+                reply += "\n\n✎ 채운 칸: " + ", ".join(fields)
+            history.append({"role": "assistant", "content": reply})
+            chat_f.write_text(json.dumps(history, ensure_ascii=False, indent=1))
+            for k, v in fields.items():  # 칸 위젯이 그려지기 전이라 바로 바꿀 수 있다
+                st.session_state[fk(k)] = v
+            if fields:
+                save_brief()  # 대화로 채운 칸은 바로 저장
+            st.rerun()
+        if history and st.button("대화 처음부터", type="tertiary"):
+            chat_f.unlink()
+            st.rerun()
+
+    with form:
+        st.markdown("**연구 주제 정리**")
+        st.caption("에이전트가 논문을 검색하고 분석할 때 기준으로 씁니다. 대화로 채운 칸은 바로 저장되고, 직접 고친 뒤에는 저장을 누르세요.")
+        with st.form("brief", border=False):
+            st.text_input("연구 주제 (한 줄)", key=fk("연구 주제"))
+            for k, hint in BRIEF_FIELDS:
+                (st.text_area if k in ("주제 씨앗", "국문 키워드", "지도교수 지침") else st.text_input)(
+                    k, key=fk(k), help=hint, placeholder=hint)
+            if st.form_submit_button("저장", type="primary"):
+                save_brief()
+                st.success("저장했습니다. 다음 검색부터 반영됩니다.")
