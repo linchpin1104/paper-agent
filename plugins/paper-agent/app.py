@@ -147,10 +147,16 @@ if mode == "학회지 구독":
     st.stop()
 
 c1, c2 = top_r.columns([3, 2], vertical_alignment="center")
+def first_tab(s):
+    """작업 순서대로. 주제 키워드가 아직 없으면 연구 주제 설정부터 연다."""
+    return "찾기" if any("(" not in k and ")" not in k for k in db.read_brief(s)["keywords"]) else "연구 주제 설정"
+
+
 if "made" in st.session_state:  # 방금 만든 프로젝트를 바로 고른 상태로
     st.session_state["slug"] = st.session_state.pop("made")
     st.session_state["sec"] = "연구 주제 설정"  # 다음 할 일: 주제·키워드 채우기
 slug = c1.selectbox("프로젝트", projects, key="slug", label_visibility="collapsed",
+                    on_change=lambda: st.session_state.update(sec=first_tab(st.session_state["slug"])),
                     placeholder="프로젝트를 만드세요") if projects else None
 with c2.popover("새 프로젝트", width="stretch"):
     new = st.text_input("영문 약칭 (예: women-founders)").strip().lower().replace(" ", "-")
@@ -179,8 +185,9 @@ s2.markdown("<div style='text-align:right;font-size:.8rem;opacity:.6'>"
             + " · ".join([f"{STATUS_KO.get(k, k)} {v}" for k, v in cnt.items() if k != "candidate"]
                          + [f"후보 {cnt.get('candidate', 0)}", f"내 메모 {n_memo}"]) + "</div>", unsafe_allow_html=True)
 
-sec = s1.segmented_control("화면", ["찾기", "읽기", "모아보기", "연구 주제 설정"], default="찾기",
-                           key="sec", label_visibility="collapsed") or "찾기"
+first = first_tab(slug)
+sec = s1.segmented_control("화면", ["연구 주제 설정", "찾기", "읽기", "모아보기"], default=first,
+                           key="sec", label_visibility="collapsed") or first
 
 # ── 찾기 ─────────────────────────────────────────────────
 VERIFY_ICON = {"human": "● 사람 확인", "text": "● 원문 확인", "db2": "◐ DB 2곳", "db1": "○ DB 1곳", "miss": "⚠ 원문에 없음"}
