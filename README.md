@@ -23,6 +23,18 @@ claude plugin install paper-agent@lin-papers
 
 처음 명령을 쓸 때 파이썬 패키지(Streamlit, PyMuPDF)를 `~/.paper-agent/venv` 에 자동으로 설치합니다. 1~2분 걸립니다.
 
+## 업데이트
+
+```bash
+claude plugin marketplace update lin-papers
+```
+
+```bash
+claude plugin update paper-agent@lin-papers
+```
+
+받은 뒤 Claude Code 를 다시 시작합니다.
+
 ## 쓰는 법
 
 논문 작업용 폴더를 하나 만들고, 그 폴더에서 Claude Code 를 엽니다. 데이터는 그 폴더의 `projects/` 에 쌓입니다.
@@ -73,3 +85,4 @@ HTML 보고서에는 공개 접근(OA) 논문의 원문 그림만 들어갑니�
 - 플러그인 본체: `plugins/paper-agent/`
 - 설치 없이 시험: `claude --plugin-dir ./plugins/paper-agent`
 - 검증: `claude plugin validate ./plugins/paper-agent`
+- 고친 내용을 올릴 때마다 `plugins/paper-agent/.claude-plugin/plugin.json` 의 `version` 을 올립니다. 그대로면 `plugin update` 가 "이미 최신"이라며 받지 않습니다.
