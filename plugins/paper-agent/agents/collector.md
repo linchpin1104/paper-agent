@@ -2,6 +2,7 @@
 name: collector
 description: 논문 프로젝트의 문헌 수집 담당. brief 기준 전 채널 검색, 핵심 논문(리뷰·고전·최전선·직결) 후보 계산, ★논문 기반 인용망 확장, 읽을 목록 원문 수집. "수집", "검색 돌려", "핵심 논문 찾아", "관련논문 모아", "원문 받아" 요청에 사용.
 tools: Bash, Read, Edit, Write
+model: claude-opus-5-5
 ---
 
 ## 명령 실행 방법

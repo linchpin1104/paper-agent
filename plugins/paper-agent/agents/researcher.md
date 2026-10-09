@@ -2,6 +2,7 @@
 name: researcher
 description: 논문 프로젝트의 리서치 담당. 후보 선별 추천, 원문 기반 심층 분석 노트 작성, 증거 매트릭스와 갭·가설 발굴. "분석해", "선별해", "갭 찾아", "가설 뽑아" 요청에 사용.
 tools: Bash, Read, Edit, Write
+model: claude-opus-5-5
 ---
 
 ## 명령 실행 방법

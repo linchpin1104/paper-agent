@@ -905,7 +905,7 @@ def brief_chat(history, cur):
     prompt = f"지금 칸 값:\n{json.dumps(cur, ensure_ascii=False)}\n\n대화:\n{talk}"
     try:
         r = subprocess.run(["claude", "-p", prompt, "--system-prompt", BRIEF_SYS, "--tools", "",
-                            "--no-session-persistence", "--model", "sonnet", "--output-format", "json",
+                            "--no-session-persistence", "--model", "claude-opus-5-5", "--output-format", "json",
                             "--json-schema", json.dumps(schema, ensure_ascii=False)],
                            capture_output=True, text=True, timeout=180)
         out = json.loads(r.stdout)["structured_output"]
