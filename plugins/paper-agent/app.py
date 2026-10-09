@@ -214,7 +214,46 @@ def seed_ui():
             con.commit()
             st.rerun()
     with st.expander("핵심 논문 추가", expanded=not seeds):
-        t_known, t_find = st.tabs(["아는 논문 입력", "핵심 논문 후보 찾기 (모를 때)"])
+        t_ai, t_known, t_find = st.tabs(["Claude 추천", "아는 논문 입력", "인용 통계로 찾기"])
+        with t_ai:
+            st.caption("연구 주제와 대화 내용을 Claude 가 읽고, 관찰을 이론으로 번역해 이론 원전·직접 선행연구·인접 분야 연구·"
+                       "방법·측정 논문을 추천합니다. 추천마다 OpenAlex 에서 실제로 있는지 확인합니다. 분야 제한이 없습니다.")
+            if st.button("연구 주제로 핵심 논문 추천받기", key="suggest", type="primary"):
+                with st.spinner("Claude 가 추천하고 OpenAlex 에서 확인하는 중 (1~2분)"):
+                    run("scripts/suggest.py", "ask", *P)
+            sf = db.HOME / "projects" / slug / "suggest.json"
+            sug = json.loads(sf.read_text()) if sf.exists() else []
+            if not sug:
+                st.caption("아직 추천이 없습니다. '연구 주제 설정'을 채운 뒤 위 버튼을 누르세요.")
+            else:
+                mark = {"확인됨": "● 확인됨", "확인 필요": "◐ 확인 필요", "못 찾음": "○ 못 찾음"}
+                rows = []
+                for i, r in enumerate(sug):
+                    m = r.get("match") or {}
+                    rows.append({"i": i, "핵심": False, "묶음": r["group"], "확인": mark[r["status"]],
+                                 "추천": f"{r['first_author']} {r['year']} · {r['title']}",
+                                 "찾은 기록": f"{m.get('year')} · {m.get('title')} · {m.get('venue') or ''}" if m else "",
+                                 "이유": r["why"], "DOI": m.get("doi")})
+                st.caption("● 확인됨 = 제목·연도(±1)·1저자가 일치 · ◐ 확인 필요 = 비슷한 기록은 있으나 판·연도·저자가 다름 · "
+                           "○ 못 찾음 = OpenAlex 에 없음 (한국 논문은 DBpia 에서 확인)")
+                se = st.data_editor(rows, key=f"sug_{slug}", hide_index=True, width="stretch",
+                                    column_order=["핵심", "묶음", "확인", "추천", "찾은 기록", "이유", "DOI"],
+                                    disabled=["묶음", "확인", "추천", "찾은 기록", "이유", "DOI"],
+                                    column_config={"핵심": st.column_config.CheckboxColumn("핵심", width="small"),
+                                                   "추천": st.column_config.TextColumn("추천", width="large"),
+                                                   "찾은 기록": st.column_config.TextColumn("OpenAlex 기록", width="large"),
+                                                   "이유": st.column_config.TextColumn("왜 필요한가", width="large"),
+                                                   "DOI": st.column_config.LinkColumn("DOI", display_text="열기")})
+                if st.button("체크한 논문을 핵심 논문으로 등록", key="sug_add"):
+                    added, skipped = 0, 0
+                    for r in se:
+                        m = sug[r["i"]].get("match")
+                        if r["핵심"] and m and seedmod.add(con, m["openalex"]):
+                            added += 1
+                        elif r["핵심"]:
+                            skipped += 1
+                    st.success(f"{added}편 등록" + (f" · 못 찾은 {skipped}편은 '아는 논문 입력'에 DOI 로 넣으세요" if skipped else ""))
+                    st.rerun()
         with t_known:
             lines = st.text_area("제목 또는 DOI 를 한 줄에 하나씩", key="seed_lines", height=110)
             if st.button("찾기", key="seed_find") and lines.strip():
@@ -239,14 +278,25 @@ def seed_ui():
                 st.rerun()
 
         with t_find:
-            st.caption("연구 주제 설정의 키워드로 가볍게 검색(키워드당 50편)한 뒤, 그 논문들이 공통으로 인용하는 고전과 "
-                       "리뷰 논문을 핵심 논문 후보로 보여줍니다. 저자·연도·저널·DOI 를 확인하고 고르세요.")
+            st.caption("연구 주제 설정의 키워드마다(그리고 첫 키워드와 다음 키워드의 교차로) 가볍게 검색한 뒤, "
+                       "흐름마다 공통으로 인용되는 고전 3편과 리뷰 논문을 후보로 보여줍니다. 저자·연도·저널·DOI 를 확인하고 고르세요.")
             if st.button("키워드로 핵심 논문 후보 찾기", key="discover"):
                 run("scripts/keypapers.py", "discover", *P)
-            cands = [dict(r) for r in con.execute(
-                "SELECT id, '고전' AS kind, local_cites, title, year, venue, authors, doi FROM papers "
-                "WHERE favorite=0 AND local_cites IS NOT NULL ORDER BY local_cites DESC LIMIT 15")]
-            cands += [dict(r) for r in con.execute(
+            # 흐름(키워드·교차 검색)마다 고전 3편씩 — 논문이 많은 흐름이 작은 흐름을 묻지 않게
+            kp = db.HOME / "projects" / slug / "keypapers.json"
+            streams = json.loads(kp.read_text()).get("streams", {}) if kp.exists() else {}
+            cands, seen_ids = [], set()
+            for label, lst in streams.items():
+                for pid_, n in [x for x in lst if x[0] not in seen_ids][:3]:
+                    r = con.execute("SELECT id, title, year, venue, authors, doi, favorite FROM papers WHERE id=?", (pid_,)).fetchone()
+                    if r and not r["favorite"]:
+                        cands.append(dict(r, kind="고전", flow=label, local_cites=n))
+                        seen_ids.add(pid_)
+            if not streams:  # 예전 방식으로 계산된 프로젝트
+                cands = [dict(r, flow="전체") for r in con.execute(
+                    "SELECT id, '고전' AS kind, local_cites, title, year, venue, authors, doi FROM papers "
+                    "WHERE favorite=0 AND local_cites IS NOT NULL ORDER BY local_cites DESC LIMIT 15")]
+            cands += [dict(r, flow="리뷰") for r in con.execute(
                 "SELECT id, '리뷰' AS kind, local_cites, title, year, venue, authors, doi FROM papers "
                 "WHERE favorite=0 AND is_review=1 ORDER BY COALESCE(core_links,0) DESC, cited_by DESC LIMIT 8")]
             if not cands:
@@ -256,11 +306,12 @@ def seed_ui():
                     r["핵심으로"] = False
                     r["1저자"] = (r["authors"] or "").split(";")[0]
                 ce = st.data_editor(cands, key=f"disc_{slug}", hide_index=True, width="stretch",
-                                    column_order=["핵심으로", "kind", "local_cites", "title", "year", "1저자", "venue", "doi"],
-                                    disabled=["kind", "local_cites", "title", "year", "1저자", "venue", "doi"],
+                                    column_order=["핵심으로", "flow", "local_cites", "title", "year", "1저자", "venue", "doi"],
+                                    disabled=["flow", "kind", "local_cites", "title", "year", "1저자", "venue", "doi"],
                                     column_config={"핵심으로": st.column_config.CheckboxColumn("핵심", width="small"),
-                                                   "kind": "종류", "local_cites": st.column_config.NumberColumn(
-                                                       "후보 인용", help="가볍게 모은 논문들 중 이 논문을 인용한 수"),
+                                                   "flow": st.column_config.TextColumn("흐름", help="이 고전을 공통으로 인용한 검색 흐름. 리뷰는 리뷰 논문"),
+                                                   "local_cites": st.column_config.NumberColumn(
+                                                       "후보 인용", help="그 흐름에서 모은 논문들 중 이 논문을 인용한 수"),
                                                    "title": st.column_config.TextColumn("제목", width="large"),
                                                    "year": "연도", "venue": "저널", "doi": "DOI"})
                 if st.button("체크한 논문을 핵심 논문으로 등록", key="disc_add", type="primary"):
@@ -880,6 +931,8 @@ BRIEF_FIELDS = [
     ("국문 키워드", "DBpia 등 국내 검색용, 쉼표로 구분"),
     ("제외 키워드", "제목에 이 단어가 있으면 수집하지 않음"),
     ("연도 범위", "예: 2016–2026"),
+    ("검색 분야", "키워드 단독 검색을 이 분야로 제한. 비우면 경영·의사결정과학·경제·심리·사회과학. "
+               "공학·컴퓨터과학·의학 등을 더하거나 '전체'. 두 키워드를 묶은 교차 검색은 늘 전체 분야"),
     ("연구 유형", "양적 / 질적 / 혼합 / 미정"),
     ("대상 저널", "투고 목표 저널. 비우면 수집 결과로 후보를 제안"),
     ("이론 후보", "쓰고 싶은 이론"),
@@ -891,6 +944,9 @@ BRIEF_SYS = """당신은 사회과학(SSCI/SCI) 논문을 준비하는 연구자
 - 한국어 존댓말. 답은 짧게. 한 번에 질문은 1~2개만, 고르기 쉽게 예시를 붙입니다.
 - 사용자의 말에서 알 수 있는 칸은 바로 채우고, 추측으로 채운 것은 reply 에서 '이렇게 넣어봤다'고 알립니다.
 - 주제 씨앗은 학술 DB 검색에 쓸 영문 키워드 5~10개(쉼표 구분), 국문 키워드는 국내 DB 검색용.
+  첫 키워드는 연구의 중심 개념이나 방법으로 둡니다. 첫 키워드와 다음 키워드들을 묶은 교차 검색이 자동으로 돕니다.
+- 검색 분야: 기본은 '경영, 의사결정과학, 경제, 심리, 사회과학'. 방법이나 데이터가 공학·컴퓨터과학·의학 쪽에서 왔고
+  그쪽 논문도 봐야 하면 더합니다(예: '경영, 의사결정과학, 경제, 공학, 컴퓨터과학'). 이유를 reply 에 한 줄로 알립니다.
 - fields 에는 이번에 새로 채우거나 고칠 칸만 넣습니다. 바꿀 게 없으면 빈 객체.
 - 칸이 거의 다 찼으면 '찾기' 탭에서 핵심 논문을 정하러 가자고 안내합니다."""
 

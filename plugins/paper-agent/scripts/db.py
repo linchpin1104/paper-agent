@@ -126,6 +126,13 @@ def connect_dir(d):
     return con
 
 
+# '검색 분야' 칸의 이름 → OpenAlex 분야(field) 번호. 비우면 사회과학 5개, '전체'면 제한 없음
+FIELD_IDS = {"경영": 14, "의사결정과학": 18, "경제": 20, "심리": 32, "사회과학": 33, "컴퓨터과학": 17, "공학": 22,
+             "수학": 26, "환경과학": 23, "에너지": 21, "의학": 27, "보건": 36, "간호": 29, "신경과학": 28,
+             "예술·인문": 12, "지구과학": 19}
+DEFAULT_FIELDS = ["경영", "의사결정과학", "경제", "심리", "사회과학"]
+
+
 def read_brief(slug):
     """brief.md 의 '- 키: 값' 줄을 dict 로. keywords/exclude 는 리스트, years 는 (시작, 끝)."""
     text = (project_dir(slug) / "brief.md").read_text()
@@ -137,6 +144,11 @@ def read_brief(slug):
     b["exclude"] = [k.strip() for k in re.split(r"[,;]", b.get("제외 키워드", "")) if k.strip()]
     ys = re.findall(r"\d{4}", b.get("연도 범위", ""))
     b["years"] = (int(ys[0]), int(ys[-1])) if ys else (2015, datetime.date.today().year)
+    fv = b.get("검색 분야", "")
+    if "전체" in fv:
+        b["fields"] = []
+    else:
+        b["fields"] = [i for name, i in FIELD_IDS.items() if name in fv] or [FIELD_IDS[n] for n in DEFAULT_FIELDS]
     return b
 
 

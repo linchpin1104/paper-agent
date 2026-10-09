@@ -86,21 +86,40 @@ def upsert_works(con, works, exclude=()):
     return ids
 
 
+def field_filter(brief):
+    """연구 주제 설정의 '검색 분야'. 'system dynamics', 'feedback loops' 같은 방법·개념어를 분야 제한 없이
+    단독 검색하면 공학·생물학 논문이 대부분을 차지한다. 기본은 사회과학, 필요하면 공학 등을 더하거나 '전체'."""
+    return f",primary_topic.field.id:{'|'.join(map(str, brief['fields']))}" if brief.get("fields") else ""
+
+
+def queries(brief):
+    """[(기록 이름, 검색식)]. 키워드마다 하나 + 첫 키워드(중심 개념)와 다음 3개의 교차 검색.
+    교차 검색은 두 흐름이 만나는 논문(예: 시스템 다이내믹스 × 벤처캐피탈)을 따로 잡는다.
+    교차 검색은 이미 주제가 좁혀져 있어 분야 제한 없이 찾는다 (공학·컴퓨터과학 저널의 관련 논문도 잡히게)."""
+    kws = brief["keywords"]
+    out = [(k, k) for k in kws]
+    if len(kws) >= 2:
+        k0 = kws[0].replace('"', "")
+        out += [(f"{k0} × {k.replace(chr(34), '')}", f'"{k0}" AND "{k.replace(chr(34), "")}"') for k in kws[1:4]]
+    return out
+
+
 def search(con, brief, pages):
     y0, y1 = brief["years"]
     total = 0
-    for kw in brief["keywords"]:
+    for label, q in queries(brief):
         n = 0
         for page in range(1, pages + 1):  # 관련도 정렬만. 인용수 정렬은 주제 밖 논문을 끌어온다
-            d = get("/works", search=kw, filter=f"publication_year:{y0}-{y1},type:article", per_page=50, page=page)
+            fields = "" if " × " in label else field_filter(brief)
+            d = get("/works", search=q, filter=f"publication_year:{y0}-{y1},type:article{fields}", per_page=50, page=page) or {}
             got = upsert_works(con, d.get("results", []), brief["exclude"])
-            log_hits(con, got.values(), kw)
+            log_hits(con, got.values(), label)
             n += len(got)
             if len(d.get("results", [])) < 50:
                 break
-        log_search(con, SRC, kw, n)
+        log_search(con, SRC, label, n)
         con.commit()
-        print(f"[openalex] {kw!r}: {n}")
+        print(f"[openalex] {label!r}: {n}")
         total += n
     return total
 

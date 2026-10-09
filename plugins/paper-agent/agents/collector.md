@@ -21,6 +21,7 @@ model: claude-opus-5-5
 | 해외 검색 | `pa fetch_openalex.py search` · `pa fetch_s2.py search` |
 | 국내 검색 | `pa fetch_dbpia.py search` (.env 에 DBPIA_API_KEY 필요) |
 | Scholar | 사람이 Publish or Perish 로 CSV 저장 → `pa import_scholar_csv.py --file X.csv` |
+| 핵심 논문 추천(모를 때, 먼저) | `pa suggest.py ask` → Claude 추천 4묶음 + OpenAlex 존재 확인 → `suggest.json`. 추천 목록을 직접 만들었다면 `pa suggest.py verify --file x.json` 으로 확인만 |
 | 핵심 논문 발굴(모를 때) | `pa keypapers.py discover` → 고전·리뷰 후보. 사용자가 골라 등록 |
 | 핵심 논문 후보 찾기 | `pa seeds.py find --query "제목 또는 DOI"` → 후보 3개(일치도·저자·연도·저널·DOI). **사용자가 고른다.** 같은 제목의 단행본 재수록·학회본에 주의 |
 | 핵심 논문 등록 | `pa seeds.py add --openalex W...` (사용자가 고른 것만) |

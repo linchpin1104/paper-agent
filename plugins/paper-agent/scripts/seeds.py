@@ -19,14 +19,16 @@ def norm(t):
     return re.sub(r"[^a-z0-9가-힣 ]", "", verify.plain(t)).strip()
 
 
-def find(query):
-    """후보 최대 3개: [{openalex, title, authors, year, venue, doi, match}]"""
+def find(query, year=None):
+    """후보 최대 3개: [{openalex, title, authors, year, venue, doi, match}]. year 를 주면 그 해 ±1 로 좁힌다 (재판본 대신 원본)."""
     q = query.strip()
     if re.match(r"^(https?://(dx\.)?doi\.org/|doi:)?10\.", q, re.I):
         w = oa.get("/works/doi:" + re.sub(r"^(https?://(dx\.)?doi\.org/|doi:)", "", q, flags=re.I))
         works = [w] if w else []
     else:
-        works = (oa.get("/works", search=q, per_page=3) or {}).get("results", [])
+        clean = re.sub(r"[,:;()\[\]\"?!|]", " ", q)  # 쉼표 등은 OpenAlex 검색에서 400 오류
+        extra = {"filter": f"publication_year:{year - 1}-{year + 1}"} if year else {}
+        works = (oa.get("/works", search=clean, per_page=3, **extra) or {}).get("results", [])
     out = []
     for w in works:
         r = oa.rec(w)

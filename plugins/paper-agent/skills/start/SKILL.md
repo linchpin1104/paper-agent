@@ -51,7 +51,8 @@ allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/bin/pa" *), Bash(sqlite3 *), Bash(ls 
 
 ## 4. 핵심 논문 정하기
 - **아는 핵심 논문이 있으면** 아래 find → add.
-- **모르거나 3편 미만이면** `pa keypapers.py discover --project {slug}` — 키워드당 50편만 가볍게 검색해, 그 논문들이 공통으로 인용하는 고전과 리뷰 논문을 후보로 낸다. 후보를 표(제목·연도·1저자·저널·후보 인용)로 보여주고 **사용자가 고르게 한다**. 고른 것은 `pa seeds.py add` 또는 화면 '핵심 논문 후보 찾기'에서 등록.
+- **모르거나 3편 미만이면 먼저** `pa suggest.py ask --project {slug}` — Claude 가 연구 주제·대화를 읽고 관찰을 이론 개념으로 번역해 이론 원전·직접 선행연구·인접 분야 연구·방법·측정 네 묶음(분야 제한 없음)을 추천하고, 하나씩 OpenAlex 에서 실제로 있는지 확인한다(확인됨·확인 필요·못 찾음). 결과는 `projects/{slug}/suggest.json`, 화면 '찾기 → 핵심 논문 추가 → Claude 추천'에서 체크해 등록. '확인 필요'는 판·연도·저자가 다르니 사용자에게 짚어준다.
+- 보완으로 `pa keypapers.py discover --project {slug}` — 키워드당 50편만 가볍게 검색해, 그 논문들이 공통으로 인용하는 고전과 리뷰 논문을 후보로 낸다. 후보를 표(제목·연도·1저자·저널·후보 인용)로 보여주고 **사용자가 고르게 한다**. 고른 것은 `pa seeds.py add` 또는 화면 '핵심 논문 후보 찾기'에서 등록.
 - 이론·방법 일반서(계획행동이론, 공통방법편의 등)는 핵심 논문 후보에서 구분해 알린다. 주제 핵심 논문이 아니다.
 - 논문마다 `pa seeds.py find --project {slug} --query "제목 또는 DOI"` → 후보를 표로 보여주고 **사용자가 고르게 한다**. 같은 제목의 단행본 재수록·학회본·SSRN 원고가 섞일 수 있다.
 - 고른 것만 `pa seeds.py add --project {slug} --openalex W...`

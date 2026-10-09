@@ -12,8 +12,8 @@
 """
 import argparse, collections, datetime, json, pathlib, re, sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from db import connect, read_brief
-from fetch_openalex import get, upsert_works, batch
+from db import connect, read_brief, project_dir
+from fetch_openalex import get, upsert_works, batch, queries, field_filter
 
 YEAR = datetime.date.today().year
 
@@ -40,7 +40,7 @@ def terms(seed):
 def find_reviews(con, brief, n):
     found = set()
     for kw in brief["keywords"]:
-        for flt in ("type:review", "title.search:review"):
+        for flt in ("type:review" + field_filter(brief), "title.search:review" + field_filter(brief)):
             d = get("/works", search=kw, filter=flt, per_page=n) or {}
             found |= set(upsert_works(con, d.get("results", []), brief["exclude"]).values())
     for pid in found:
@@ -58,7 +58,7 @@ def run(con, slug, n_classics, n_reviews):
     top = [w for w, _ in cnt.most_common(n_classics)]
     streams = {}
     per = max(4, n_classics // max(1, len(brief["keywords"])))
-    for kw in brief["keywords"]:
+    for kw, _ in queries(brief):  # 키워드별 + 교차 검색별 흐름
         ids = [r[0] for r in con.execute("SELECT paper_id FROM hits WHERE query=?", (kw,))]
         c = collections.Counter(w for pid in ids for w in set(refs.get(pid, [])))
         streams[kw] = [(w, n) for w, n in c.most_common(per) if n >= 3]
@@ -67,6 +67,9 @@ def run(con, slug, n_classics, n_reviews):
     if missing:
         batch(con, missing)  # 후보에 없던 고전을 가져온다
     m = oa_map(con)
+    # 화면이 흐름마다 고전을 따로 보여줄 수 있게 저장 (큰 흐름이 작은 흐름을 묻지 않도록)
+    (project_dir(slug) / "keypapers.json").write_text(json.dumps(
+        {"streams": {kw: [[m[w], n] for w, n in lst if w in m] for kw, lst in streams.items()}}, ensure_ascii=False, indent=1))
     con.execute("UPDATE papers SET local_cites=NULL, core_links=NULL")
     for w, c in cnt.items():
         if w in m and c >= 2:
@@ -119,5 +122,8 @@ if __name__ == "__main__":
     con = connect(a.project)
     if a.cmd == "discover":
         from fetch_openalex import search
+        labels = [kw for kw, _ in queries(read_brief(a.project))]
+        # 같은 검색어의 이전 기록을 새 결과로 바꾼다 (논문은 그대로, 흐름 계산용 기록만)
+        con.executemany("DELETE FROM hits WHERE query=?", [(l,) for l in labels])
         search(con, read_brief(a.project), 1)  # 키워드당 1쪽(50편)만 — 쏟아 붓지 않는다
     run(con, a.project, a.classics, a.reviews)

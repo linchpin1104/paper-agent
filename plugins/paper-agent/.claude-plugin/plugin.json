@@ -1,7 +1,7 @@
 {
   "name": "paper-agent",
   "displayName": "논문 에이전트",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "SSCI/SCI 사회과학 논문용 문헌 수집·핵심 논문 선정·원문 심층 분석·형광펜 메모 도구",
   "author": { "name": "Lin" },
   "keywords": ["research", "literature-review", "ssci", "papers"]
