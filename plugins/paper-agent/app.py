@@ -1,5 +1,5 @@
 """논문 프로젝트 페이지.  실행: streamlit run app.py"""
-import base64, html, json, pathlib, re, shutil, subprocess, sys
+import base64, html, json, os, pathlib, re, shutil, subprocess, sys
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -27,7 +27,65 @@ def run(*args):
     args = [str(ROOT / a) if a.startswith("scripts/") else a for a in args]
     with st.spinner(pathlib.Path(args[0]).stem):
         r = subprocess.run([sys.executable, *args], cwd=db.HOME, capture_output=True, text=True)
-    st.code((r.stdout + r.stderr)[-4000:] or "(출력 없음)")
+    out = (r.stdout + r.stderr)[-4000:] or "(출력 없음)"
+    st.code(out)
+    return out
+
+
+# ── 심층 분석 (백그라운드 Claude Code) ─────────────────────
+# 화면에서 /paper-agent:analyze 를 그대로 돌린다. 이 폴더의 플러그인을 직접 불러 쓰므로 설치하지 않아도 된다.
+# 권한은 분석에 필요한 것만: 파일 읽기·쓰기와 pa·mkdir·ls·sqlite3 명령.
+# pa 는 PATH 에 올려 `pa …` 로 부르게 한다. 전체 경로 규칙은 ${…} 변수·한글 경로에서 허용 매칭이 안 된다
+ANALYZE_TOOLS = ["Read", "Write", "Edit", "Bash(pa *)", "Bash(mkdir *)", "Bash(ls *)", "Bash(sqlite3 *)"]
+
+
+def job_files(slug):
+    d = db.HOME / "projects" / slug / "export"
+    return d / "analyze.pid", d / "analyze.ids", d / "analyze.log"
+
+
+def analysis_running(slug):
+    pidf = job_files(slug)[0]
+    try:
+        os.kill(int(pidf.read_text()), 0)  # 프로세스가 살아 있는지만 확인
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def start_analysis(slug, ids):
+    pidf, idsf, logf = job_files(slug)
+    prompt = (f"/paper-agent:analyze {' '.join(map(str, ids))}\n\n"
+              f"프로젝트는 {slug}. 화면에서 시작한 백그라운드 작업이라 사용자에게 묻지 말고 끝까지 진행한다.\n"
+              "이 작업에서는 pa 가 PATH 에 있다. 모든 pa 명령은 전체 경로 대신 `pa 스크립트.py …` 로 실행하고, "
+              "researcher 에이전트 프롬프트 첫 줄에도 이 문장을 그대로 넣는다.")
+    with open(logf, "w") as log:
+        proc = subprocess.Popen(["claude", "-p", prompt, "--plugin-dir", str(ROOT), "--model", "claude-opus-5-5",
+                                 "--allowedTools", *ANALYZE_TOOLS], cwd=db.HOME, stdin=subprocess.DEVNULL,
+                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                env={**os.environ, "PAPER_AGENT_HOME": str(db.HOME),
+                                     "PATH": f"{ROOT / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"})
+    pidf.write_text(str(proc.pid))
+    idsf.write_text(" ".join(map(str, ids)))
+
+
+def analysis_box(slug):
+    """분석 시작 버튼과 진행 상황. 진행은 DB 의 상태(분석됨)로 센다."""
+    pidf, idsf, logf = job_files(slug)
+    if analysis_running(slug):
+        ids = [int(x) for x in idsf.read_text().split()]
+        done = con.execute(f"SELECT count(*) FROM papers WHERE status='analyzed' AND id IN ({','.join('?' * len(ids))})", ids).fetchone()[0]
+        st.info(f"심층 분석 중 · {done}/{len(ids)}편 끝남. 한 편에 10~20분 걸립니다. 창을 닫아도 계속됩니다.")
+        st.button("진행 새로고침", width="stretch")
+        return
+    todo = [r["id"] for r in con.execute("SELECT id FROM papers WHERE status='fulltext'")]
+    if todo and st.button(f"원문 있는 {len(todo)}편 심층 분석 시작", type="primary", width="stretch",
+                          help="논문마다 분석 에이전트가 원문 전체를 읽고 논증 흐름·연구 모형·20개 항목·가설·변수를 원문 인용과 쪽수로 정리합니다. 한 번에 3편씩"):
+        start_analysis(slug, todo)
+        st.rerun()
+    if logf.exists() and logf.stat().st_size:
+        with st.expander("지난 분석 기록"):
+            st.code(logf.read_text()[-3000:])
 
 
 # ── 학회지 구독 (프로젝트와 별개) ───────────────────────────
@@ -138,7 +196,14 @@ def journal_page():
 
 # ── 맨 위 메뉴 (사이드바 없음: 좁은 창에서도 본문을 가리지 않게) ─────────────
 (db.HOME / "projects").mkdir(exist_ok=True)
-projects = sorted(p.name for p in (db.HOME / "projects").iterdir() if (p / "brief.md").exists())
+def last_used(d):
+    """프로젝트 폴더 바로 아래 파일(library.db, brief.md, 마지막으로 연 표시 .opened 등) 중 가장 최근 수정 시각."""
+    return max((f.stat().st_mtime for f in d.iterdir() if f.is_file()), default=0)
+
+
+# 최근에 작업하거나 연 프로젝트가 맨 위 → 앱을 열면 그것부터 선택된다
+projects = [p.name for p in sorted((p for p in (db.HOME / "projects").iterdir() if (p / "brief.md").exists()),
+                                   key=last_used, reverse=True)]
 # 왼쪽 위: 무엇을 할지(메뉴) · 오른쪽 위: 어느 프로젝트인지
 top_l, top_r = st.columns([3, 2], vertical_alignment="center")
 mode = top_l.segmented_control("메뉴", ["논문 프로젝트", "학회지 구독"], default="논문 프로젝트",
@@ -157,7 +222,8 @@ if "made" in st.session_state:  # 방금 만든 프로젝트를 바로 고른 �
     st.session_state["slug"] = st.session_state.pop("made")
     st.session_state["sec"] = "연구 주제 설정"  # 다음 할 일: 주제·키워드 채우기
 slug = c1.selectbox("프로젝트", projects, key="slug", label_visibility="collapsed",
-                    on_change=lambda: st.session_state.update(sec=first_tab(st.session_state["slug"])),
+                    on_change=lambda: (st.session_state.update(sec=first_tab(st.session_state["slug"])),
+                                       (db.HOME / "projects" / st.session_state["slug"] / ".opened").touch()),
                     placeholder="프로젝트를 만드세요") if projects else None
 with c2.popover("새 프로젝트", width="stretch"):
     new = st.text_input("영문 약칭 (예: women-founders)").strip().lower().replace(" ", "-")
@@ -491,11 +557,13 @@ def paper_list():
                     "section[data-testid=stSidebar] [data-testid=stCaptionContainer]{margin:.9rem 0 .2rem .5rem}</style>", unsafe_allow_html=True)
         st.markdown("**논문**")
         nopdf = sum(r["status"] not in groups for r in rows)
-        with st.expander(f"원문 모으기 · 없음 {nopdf}편", expanded=nopdf > 0 and nopdf == len(rows)):
+        with st.expander(f"원문 모으기 · 없음 {nopdf}편", expanded="ft_log" in st.session_state or 0 < nopdf == len(rows)):
             if st.button("무료 원문 자동으로 받기", width="stretch",
                          help="OpenAlex·Unpaywall·Semantic Scholar 가 아는 무료 원문(저자 홈페이지·기관 저장소·arXiv 등)"):
-                run("scripts/fulltext.py", "fetch", *P)
-                st.rerun()
+                st.session_state["ft_log"] = run("scripts/fulltext.py", "fetch", *P)
+                st.rerun()  # 목록 묶음(원문 있음/없음)을 새로 그린다. 결과는 아래에 다시 보여준다
+            if "ft_log" in st.session_state:
+                st.code(st.session_state.pop("ft_log"))
             st.caption("유료 논문은 도서관에서 받아 여기에 한꺼번에 끌어다 놓으세요. DOI·제목으로 어느 논문인지 맞춰 붙입니다.")
             ups = st.file_uploader("PDF 여러 개", type="pdf", accept_multiple_files=True, key="bulk_pdf",
                                    label_visibility="collapsed")
@@ -506,8 +574,10 @@ def paper_list():
                 for f in ups:
                     (tmp / f.name).write_bytes(f.getvalue())
                     files.append(str(tmp / f.name))
-                run("scripts/fulltext.py", "attach", *P, "--file", *files)
+                st.session_state["ft_log"] = run("scripts/fulltext.py", "attach", *P, "--file", *files)
                 shutil.rmtree(tmp, ignore_errors=True)
+                st.rerun()
+        analysis_box(slug)
         q = st.text_input("찾기", key="rd_q", placeholder="제목·저자", label_visibility="collapsed").lower()
         shown = [r for r in rows if not q or q in (r["title"] + " " + (r["authors"] or "")).lower()]
         if not shown:
@@ -729,11 +799,29 @@ def set_note_checked(nid):
 def review_box(pid, p):
     """사람 검토: 진위 체크 + 검토 결과 + 인용 관계 확인."""
     label = p["review"] or "미검토"
-    with st.expander(f"검토 · {label}" + (f" · {p['reviewed_at'][:10]}" if p["reviewed_at"] else ""), expanded=(label == "미검토")):
+    tc = p["title_check"]
+    def save(choice, note=None):
+        con.execute("UPDATE papers SET review=?, review_note=?, reviewed_at=? WHERE id=?",
+                    (None if choice == "미검토" else choice, note, db.now(), pid))
+        con.commit()
+    if label == "미검토" and tc:  # 원문이 있는데 아직 안 본 논문: 한 번에 누를 수 있게 크게
+        st.markdown("<style>[class*='st-key-rvok'] button,[class*='st-key-rvbad'] button{min-height:3.2rem;font-size:1.05rem}</style>",
+                    unsafe_allow_html=True)
+        a, b, c = st.columns([3, 2, 1], vertical_alignment="center")
+        a.markdown(f"**원문을 보고 확인해 주세요** · 제목 대조 {tc}"
+                   + (" ⚠ 출판 전 원고" if tc == "일치·원고본" else " ⚠ 다른 문서일 수 있음" if tc == "불일치" else ""))
+        b.button("✓ 원문 확인함", key=f"rvok{pid}", type="primary", width="stretch",
+                 on_click=save, args=("원문 확인함", "화면에서 확인"))
+        c.button("문제 있음", key=f"rvbad{pid}", width="stretch", on_click=save, args=("문제 있음",))
+    elif label != "미검토":
+        st.markdown(f"<span style='color:{'#1a7f37' if label == '원문 확인함' else '#c62828'}'>"
+                    f"{'✓' if label == '원문 확인함' else '⚠'} {label}</span>"
+                    f"<span style='color:#5b6474'> · {(p['reviewed_at'] or '')[:10]} · {html.escape(p['review_note'] or '')}</span>",
+                    unsafe_allow_html=True)
+    with st.expander(f"검토 자세히 · {label}", expanded=False):
         left, right = st.columns([1, 1], gap="large")
         with left:
             st.markdown("**진위 확인**")
-            tc = p["title_check"]
             st.markdown(("✓" if tc == "일치" else "⚠" if tc in ("불일치", "일치·원고본") else "·")
                         + f" PDF 첫 쪽 제목 대조: {tc or '원문 없음'} (자동)")
             if tc == "일치·원고본":
@@ -746,10 +834,8 @@ def review_box(pid, p):
             choice = st.radio("검토 결과", db.REVIEW, index=db.REVIEW.index(label), horizontal=True, key=f"rv{pid}")
             note = st.text_input("검토 메모", p["review_note"] or "", key=f"rvn{pid}",
                                  placeholder="예: 원문 확인. 2019 단행본 재수록본이 아닌 2006 ETP 원 논문")
-            if st.button("검토 저장", key=f"rvs{pid}", type="primary"):
-                con.execute("UPDATE papers SET review=?, review_note=?, reviewed_at=? WHERE id=?",
-                            (None if choice == "미검토" else choice, note or None, db.now(), pid))
-                con.commit()
+            if st.button("검토 저장", key=f"rvs{pid}"):
+                save(choice, note or None)
                 st.rerun()
         with right:
             seeds = {r[0] for r in con.execute("SELECT id FROM papers WHERE favorite=1")}
@@ -909,6 +995,9 @@ if sec == "읽기":
                 run("scripts/fulltext.py", "attach", *P, "--paper", str(pid), "--file", str(tmp))
                 tmp.unlink(missing_ok=True)
         else:
+            if p["status"] == "fulltext" and not analysis_running(slug) and st.button("이 논문 심층 분석", key=f"an{pid}"):
+                start_analysis(slug, [pid])
+                st.rerun()
             reader(pid, p, ft)
 
         rel = con.execute(

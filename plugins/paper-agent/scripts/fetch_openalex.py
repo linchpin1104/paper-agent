@@ -38,7 +38,7 @@ def get(path, **params):
                                       "무료 발급: https://help.openalex.org/api/authentication/") from None
                 time.sleep(2 ** i)
                 continue
-            if e.code == 503:
+            if e.code in (500, 502, 503, 504):  # 서버 일시 오류는 잠시 뒤 다시
                 time.sleep(2 ** i)
                 continue
             if e.code == 404:

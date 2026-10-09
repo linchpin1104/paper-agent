@@ -10,6 +10,11 @@ from db import connect, project_dir, load_env, now
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) paper-agent/0.1"
 # 자동 접속을 감지하면 인터넷 주소(IP) 전체를 막는 출판사. 막히면 도서관 경유 접속까지 안 되므로 자동으로는 건드리지 않는다
 NO_BOT = ("sciencedirect.com", "elsevier.com")
+try:  # 맥의 python.org 파이썬은 인증서 묶음이 없어 기관 저장소 등에서 SSL 오류가 난다
+    import certifi, ssl
+    CTX = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    CTX = None
 
 
 def extract_pages(pdf):
@@ -43,12 +48,14 @@ def fname(pid, doi):
     return f"{pid:05d}_" + (re.sub(r"[^A-Za-z0-9._-]", "_", doi)[:80] if doi else "nodoi") + ".pdf"
 
 
-def download(url, dest):
+def download(url, dest, follow=True):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/pdf,*/*"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        data = r.read(60_000_000)
+    with urllib.request.urlopen(req, timeout=60, context=CTX) as r:
+        data, base = r.read(60_000_000), r.url
     if not data.startswith(b"%PDF"):
-        return False  # 랜딩 페이지 HTML 등
+        # 논문 페이지(HTML)면 학술 메타태그의 PDF 주소를 한 번 더 따라간다 (PeerJ·저장소 등 직링크가 없는 무료본)
+        m = re.search(rb'<meta[^>]+name=["\']citation_pdf_url["\'][^>]+content=["\']([^"\']+)', data[:300_000], re.I)
+        return follow and bool(m) and download(urllib.parse.urljoin(base, m.group(1).decode()), dest, follow=False)
     dest.write_bytes(data)
     return True
 
@@ -92,7 +99,9 @@ def openalex_pdfs(con, pid):
     locs = (get(f"/works/{row['source_id']}", select="locations") or {}).get("locations", [])
     # 저장소(repository) 위치를 먼저: 출판사 사이트보다 봇 차단이 적다
     locs.sort(key=lambda l: ((l.get("source") or {}).get("type") != "repository"))
-    return [l["pdf_url"] for l in locs if l.get("pdf_url")]
+    # PDF 직링크 먼저, 없으면 무료(OA) 위치의 논문 페이지 → download() 가 페이지 안의 PDF 주소를 찾는다
+    return ([l["pdf_url"] for l in locs if l.get("pdf_url")]
+            + [l["landing_page_url"] for l in locs if l.get("is_oa") and l.get("landing_page_url")])
 
 
 def fetch(con, slug, status, paper):
@@ -160,6 +169,11 @@ def attach(con, slug, src, paper=None):
     dest = project_dir(slug) / "pdf" / fname(paper, doi)
     shutil.copy(src, dest)
     print(f"  {src.name} → #{paper} 원문 {store(con, slug, paper, dest)}쪽 등록")
+    # 사람이 직접 받아 올린 PDF 가 기록과 제목까지 맞으면 그 자체가 원문 확인이다. 원고본·불일치는 사람이 따로 본다
+    if con.execute("UPDATE papers SET review='원문 확인함', review_note='직접 올린 PDF · 제목 일치 (자동 기록)', reviewed_at=? "
+                   "WHERE id=? AND review IS NULL AND title_check='일치'", (now(), paper)).rowcount:
+        print(f"  #{paper} 검토: 원문 확인함 (직접 올린 PDF, 제목 일치)")
+    con.commit()
 
 
 def missing(con):
