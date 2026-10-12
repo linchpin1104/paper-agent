@@ -3,22 +3,13 @@
   "configurations": [
     {
       "name": "paper-agent",
-      "runtimeExecutable": "python3",
+      "runtimeExecutable": "sh",
       "runtimeArgs": [
-        "-m",
-        "streamlit",
-        "run",
-        "plugins/paper-agent/app.py",
-        "--server.port",
-        "8501",
-        "--server.headless",
-        "true",
-        "--browser.gatherUsageStats",
-        "false",
-        "--client.toolbarMode",
-        "minimal"
+        "-c",
+        "exec python3 -m streamlit run plugins/paper-agent/app.py --server.port \"${PORT:-8501}\" --server.headless true --browser.gatherUsageStats false --client.toolbarMode minimal"
       ],
-      "port": 8501
+      "port": 8501,
+      "autoPort": true
     }
   ]
 }
