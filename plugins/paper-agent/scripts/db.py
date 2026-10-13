@@ -57,7 +57,7 @@ TIERS = ["리뷰", "고전", "최전선", "직결"]
 KEY_ROLES = {"이론 앵커": "내 연구가 검증·확장·형식화하는 이론의 원전",
              "방법 선례": "같은 방법·연구 전략을 쓴 논문. 방법 장의 근거",
              "현상 선례": "같은 현상을 다른 맥락이나 방법으로 다룬 논문",
-             "차별화 대상": "내 질문과 가장 가까운 선행연구. 반드시 인용하고 차이를 밝힌다",
+             "차별화 대상": "내 질문과 가장 가까운 선행연구. 인용하고 차이를 밝힌다",
              "배경": "개념 정의·맥락·통계 근거"}
 MUST_ROLES = ["이론 앵커", "방법 선례", "차별화 대상"]  # 비어 있으면 심사에서 바로 지적되는 역할
 STATUSES = ["candidate", "shortlist", "fulltext", "analyzed", "rejected"]
@@ -242,7 +242,7 @@ def checkup(con):
     if rows and not recent:
         warn.append(f"최근 5년({this - 5}년 이후) 논문이 없습니다. 최신 연구를 모르고 썼다는 지적을 받기 쉽습니다.")
     if rows and not ko:
-        warn.append("국내 논문이 없습니다. 국내 학술지에 낸다면 반드시 지적됩니다.")
+        warn.append("국내 논문이 없습니다. 국내 학술지에 낸다면 지적받기 쉽습니다.")
     for k in MUST_ROLES:
         if not roles[k]:
             warn.append(f"'{k}' 역할 논문이 없습니다 — {KEY_ROLES[k]}.")
