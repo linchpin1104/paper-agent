@@ -89,6 +89,18 @@ def analysis_box(slug):
 
 
 # ── 학회지 구독 (프로젝트와 별개) ───────────────────────────
+def check_all(key):
+    """체크 칸 표 위의 '모두 체크 / 모두 해제'. (기본값, 표 key) 를 돌려준다.
+    누르면 표 key 를 바꿔 새로 그리므로, 그 표의 체크 칸이 한꺼번에 바뀐다. 기본값 None = 원래 기본값."""
+    s = st.session_state.setdefault(f"all_{key}", [None, 0])
+    a, b, _ = st.columns([1, 1, 6], gap="small")
+    if a.button("모두 체크", key=f"alla_{key}", type="tertiary"):
+        s[:] = [True, s[1] + 1]
+    if b.button("모두 해제", key=f"alln_{key}", type="tertiary"):
+        s[:] = [False, s[1] + 1]
+    return s[0], f"{key}_{s[1]}"
+
+
 def journal_card(j):
     pr = j.get("profile")
     issn = j.get("issn")
@@ -168,6 +180,10 @@ def journal_page():
             groups.setdefault(r["journal"] or "기타", []).append(r)
         for jname, rows in groups.items():
             with st.expander(f"{jname} · {len(rows)}편", expanded=False):
+                a, b, _ = st.columns([1, 1, 6], gap="small")
+                for lab, val, col in (("모두 체크", True, a), ("모두 해제", False, b)):
+                    col.button(lab, key=f"jall{val}{jname}", type="tertiary",
+                               on_click=lambda rs=rows, v=val: st.session_state.update({f"js{r['id']}": v for r in rs}))
                 for r in rows:
                     a, b = st.columns([1, 20])
                     a.checkbox("보내기", key=f"js{r['id']}", label_visibility="collapsed")
@@ -243,7 +259,14 @@ if not slug:
     st.info("오른쪽 위 '새 프로젝트'로 연구 프로젝트를 만드세요.")
     st.stop()
 
-con = db.connect(slug)
+@st.cache_resource
+def project_con(s):
+    """프로젝트마다 연결 하나. 다시 그릴 때마다 새로 열면 닫히지 않은 연결이 쌓여 잠금을 쥔다."""
+    return db.connect(s)
+
+
+con = project_con(slug)
+con.commit()  # 앞선 실행이 끝내지 못한 쓰기가 남아 있으면 마무리해 잠금을 푼다
 P = ["--project", slug]
 cnt = dict(con.execute("SELECT status, COUNT(*) FROM papers GROUP BY status").fetchall())
 n_memo = con.execute("SELECT COUNT(*) FROM memos").fetchone()[0]
@@ -266,9 +289,10 @@ def seed_ui():
     seeds = con.execute("SELECT id, title, year, venue, authors, doi, review FROM papers WHERE favorite=1 ORDER BY year").fetchall()
     st.markdown(f"**① 핵심 논문 {len(seeds)}편**")
     if seeds:
-        rows = [dict(r, 빼기=False, 저자=(r["authors"] or "").split(";")[0], 검토=r["review"] or "미검토",
+        on, ekey = check_all(f"seeds_{slug}")
+        rows = [dict(r, 빼기=bool(on), 저자=(r["authors"] or "").split(";")[0], 검토=r["review"] or "미검토",
                      DOI=f"https://doi.org/{r['doi']}" if r["doi"] else None) for r in seeds]
-        se = st.data_editor(rows, key=f"seeds_{slug}", hide_index=True, width="stretch",
+        se = st.data_editor(rows, key=ekey, hide_index=True, width="stretch",
                             column_order=["빼기", "title", "year", "저자", "venue", "검토", "DOI"],
                             disabled=["title", "year", "저자", "venue", "검토", "DOI"],
                             column_config={"빼기": st.column_config.CheckboxColumn("빼기", width="small"),
@@ -303,7 +327,10 @@ def seed_ui():
                                  "이유": r["why"], "DOI": m.get("doi")})
                 st.caption("● 확인됨 = 제목·연도(±1)·1저자가 일치 · ◐ 확인 필요 = 비슷한 기록은 있으나 판·연도·저자가 다름 · "
                            "○ 못 찾음 = OpenAlex 에 없음 (한국 논문은 DBpia 에서 확인)")
-                se = st.data_editor(rows, key=f"sug_{slug}", hide_index=True, width="stretch",
+                on, ekey = check_all(f"sug_{slug}")
+                for r in rows:
+                    r["핵심"] = bool(on)
+                se = st.data_editor(rows, key=ekey, hide_index=True, width="stretch",
                                     column_order=["핵심", "묶음", "확인", "추천", "찾은 기록", "이유", "DOI"],
                                     disabled=["묶음", "확인", "추천", "찾은 기록", "이유", "DOI"],
                                     column_config={"핵심": st.column_config.CheckboxColumn("핵심", width="small"),
@@ -369,10 +396,11 @@ def seed_ui():
             if not cands:
                 st.caption("아직 후보가 없습니다. 위 버튼을 누르세요. (연구 주제 설정에 키워드가 있어야 합니다)")
             else:
+                on, ekey = check_all(f"disc_{slug}")
                 for r in cands:
-                    r["핵심으로"] = False
+                    r["핵심으로"] = bool(on)
                     r["1저자"] = (r["authors"] or "").split(";")[0]
-                ce = st.data_editor(cands, key=f"disc_{slug}", hide_index=True, width="stretch",
+                ce = st.data_editor(cands, key=ekey, hide_index=True, width="stretch",
                                     column_order=["핵심으로", "flow", "local_cites", "title", "year", "1저자", "venue", "doi"],
                                     disabled=["flow", "kind", "local_cites", "title", "year", "1저자", "venue", "doi"],
                                     column_config={"핵심으로": st.column_config.CheckboxColumn("핵심", width="small"),
@@ -402,20 +430,21 @@ def seed_ui():
                           help="선행: 핵심 논문이 인용한 논문 · 후속: 핵심 논문을 인용한 논문 · 유사: 데이터베이스가 추천한 비슷한 논문")
     shown = [r for r in rows if r["n_seeds"] >= min_n and any(x in r["rels"] for x in rels)]
     st.caption(f"{len(shown)}편 · 인용 검증: " + " · ".join(f"{v} = {db.VERIFY[k]}" for k, v in VERIFY_ICON.items()))
+    on, ekey = check_all(f"rel_{slug}")
     for r in shown:
-        r["읽기"] = False
+        r["읽기"] = bool(on)
         r["검증"] = VERIFY_ICON.get(r["verified"], "—")
         r["검토"] = r["review"] or "미검토"
         r["상태"] = STATUS_KO.get(r["status"], r["status"])
-    ed = st.data_editor(shown, key=f"rel_{slug}", hide_index=True, width="stretch", height=480,
+    ed = st.data_editor(shown, key=ekey, hide_index=True, width="stretch", height=480,
                         column_order=["읽기", "n_seeds", "rels", "검증", "title", "year", "venue", "검토", "상태"],
                         disabled=["n_seeds", "rels", "검증", "title", "year", "venue", "검토", "상태"],
                         column_config={"읽기": st.column_config.CheckboxColumn("읽기", width="small"),
                                        "n_seeds": st.column_config.NumberColumn("핵심", help="이어진 핵심 논문 수"),
                                        "rels": "관계", "title": st.column_config.TextColumn("제목", width="large"),
                                        "year": "연도", "venue": "저널"})
-    if st.button("체크한 논문을 읽을 목록에 넣기", key="rel_add", type="primary"):
-        ids = [r["id"] for r in ed if r["읽기"]]
+    ids = [r["id"] for r in ed if r["읽기"]]
+    if st.button(f"체크한 {len(ids)}편을 읽을 목록에 넣기", key="rel_add", type="primary", disabled=not ids):
         con.executemany("UPDATE papers SET status='shortlist' WHERE id=? AND status='candidate'", [(i,) for i in ids])
         con.commit()
         st.success(f"{len(ids)}편을 읽을 목록에 넣었습니다. '키워드로 찾기' 탭의 '읽을 목록 원문 받기'로 원문을 받거나 읽기 탭에서 PDF 를 올리세요.")
@@ -459,11 +488,12 @@ if sec == "찾기":
             order = {t: i for i, t in enumerate(db.TIERS)}
             picks.sort(key=lambda r: (order[r["tier"]], -(r["local_cites"] or 0)))
             st.caption(" · ".join(f"**{t}** {TIER_HELP[t]}" for t in db.TIERS))
+            on, ekey = check_all(f"picks_{slug}")
             for r in picks:
-                r["담기"] = r["status"] in ("candidate",)
+                r["담기"] = r["status"] in ("candidate",) if on is None else on
                 r["status"] = STATUS_KO.get(r["status"], r["status"])
             pe = st.data_editor(
-                picks, key=f"picks_{slug}", hide_index=True, width="stretch",
+                picks, key=ekey, hide_index=True, width="stretch",
                 column_order=["담기", "tier", "title", "year", "reason", "local_cites", "status", "link"],
                 disabled=["tier", "title", "year", "reason", "local_cites", "status", "link"],
                 column_config={"담기": st.column_config.CheckboxColumn("읽기", width="small"),
@@ -472,8 +502,8 @@ if sec == "찾기":
                                "reason": st.column_config.TextColumn("고른 이유", width="large"),
                                "local_cites": st.column_config.NumberColumn("후보 인용", help="이 프로젝트 후보 논문 중 이 논문을 인용한 수"),
                                "status": "상태", "link": st.column_config.LinkColumn("링크", display_text="열기")})
-            if st.button("체크한 논문을 읽을 목록에 넣기", type="primary"):
-                ids = [r["id"] for r in pe if r["담기"]]
+            ids = [r["id"] for r in pe if r["담기"]]
+            if st.button(f"체크한 {len(ids)}편을 읽을 목록에 넣기", type="primary", disabled=not ids):
                 con.executemany("UPDATE papers SET status='shortlist' WHERE id=? AND status='candidate'", [(i,) for i in ids])
                 con.commit()
                 st.success(f"{len(ids)}편을 읽을 목록에 넣었습니다. 위 ③ 버튼으로 원문을 받으세요.")
@@ -654,7 +684,7 @@ def goto(key, n):
 @st.cache_data(show_spinner=False, max_entries=256)
 def fig_png(slug_, fid, sig):
     """원문 그림·표 잘라낸 PNG. sig(좌표·회전)가 바뀌면 다시 그린다."""
-    return figures.crop_png(db.connect(slug_), slug_, fid)
+    return figures.crop_png(project_con(slug_), slug_, fid)
 
 
 def show_fig(f, PG, key, width="stretch"):

@@ -127,7 +127,8 @@ def connect_dir(d):
     (d / "gaps").mkdir(exist_ok=True)
     (d / "export").mkdir(exist_ok=True)
     # 화면(Streamlit)의 버튼 콜백은 앞선 실행에서 연 연결을 다른 스레드에서 쓴다. 한 번에 한 스레드만 쓰므로 안전
-    con = sqlite3.connect(d / "library.db", check_same_thread=False)
+    # timeout: 다른 작업(화면·에이전트)이 쓰는 중이면 바로 실패하지 않고 30초까지 기다린다
+    con = sqlite3.connect(d / "library.db", check_same_thread=False, timeout=30)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
     for table, extra in (("papers", PAPER_EXTRA), ("edges", EDGE_EXTRA), ("notes", NOTE_EXTRA)):
