@@ -1108,12 +1108,21 @@ def brief_chat(history, cur):
         r = subprocess.run(["claude", "-p", prompt, "--system-prompt", BRIEF_SYS, "--tools", "",
                             "--no-session-persistence", "--model", "claude-opus-5-5", "--output-format", "json",
                             "--json-schema", json.dumps(schema, ensure_ascii=False)],
-                           capture_output=True, text=True, timeout=180)
-        out = json.loads(r.stdout)["structured_output"]
+                           capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
+        res = json.loads(r.stdout)
+        out = res.get("structured_output")
+        if res.get("is_error") or not out:  # 로그인 만료·사용량 초과 등은 이유가 result 에 온다
+            why = str(res.get("result") or r.stderr or "").strip()
+            if "authenticate" in why or "OAuth" in why or "log in" in why.lower() or "login" in why.lower():
+                return ("Claude Code 로그인이 풀려 답을 받지 못했습니다. 터미널에서 `claude auth login` 으로 "
+                        "다시 로그인한 뒤 같은 말을 다시 보내 주세요."), {}
+            return f"답을 받지 못했습니다. Claude 가 알려 준 이유: {why[:300] or '알 수 없음'}", {}
         return out["reply"], {k: v for k, v in out["fields"].items() if k in keys}
     except FileNotFoundError:
         return "claude 명령을 찾지 못했습니다. Claude Code 가 설치된 컴퓨터에서 화면을 여세요.", {}
-    except Exception as e:  # 시간 초과·로그인 만료 등
+    except subprocess.TimeoutExpired:
+        return "3분 안에 답이 오지 않았습니다. 잠시 뒤 다시 보내 주세요.", {}
+    except Exception as e:  # 예상하지 못한 출력
         return f"답을 받지 못했습니다. 잠시 뒤 다시 보내 주세요. ({type(e).__name__})", {}
 
 
