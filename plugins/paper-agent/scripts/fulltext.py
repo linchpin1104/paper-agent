@@ -1,9 +1,9 @@
 """원문 PDF 수집과 쪽 단위 텍스트 추출.
-  python scripts/fulltext.py fetch  --project SLUG [--status shortlist] [--paper ID]   # OA 자동 다운로드 (읽을 목록 + 핵심 논문)
+  python scripts/fulltext.py fetch  --project SLUG [--status shortlist] [--paper ID] [--retry]   # OA 자동 다운로드 (읽을 목록 + 핵심 논문). 14일 안에 시도한 논문은 --retry 없으면 건너뜀
   python scripts/fulltext.py attach --project SLUG [--paper ID] --file a.pdf [b.pdf …]  # 도서관에서 받은 PDF 등록. --paper 없으면 DOI·제목으로 자동 짝짓기
   python scripts/fulltext.py missing --project SLUG                                     # 원문 못 받은 shortlist 와 링크
 """
-import argparse, json, pathlib, re, shutil, sys, time, urllib.error, urllib.parse, urllib.request
+import argparse, datetime, json, pathlib, re, shutil, sys, time, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from db import connect, project_dir, load_env, now
 
@@ -50,7 +50,7 @@ def fname(pid, doi):
 
 def download(url, dest, follow=True):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/pdf,*/*"})
-    with urllib.request.urlopen(req, timeout=60, context=CTX) as r:
+    with urllib.request.urlopen(req, timeout=30, context=CTX) as r:  # 응답 없는 사이트에 오래 묶이지 않게
         data, base = r.read(60_000_000), r.url
     if not data.startswith(b"%PDF"):
         # 논문 페이지(HTML)면 학술 메타태그의 PDF 주소를 한 번 더 따라간다 (PeerJ·저장소 등 직링크가 없는 무료본)
@@ -104,11 +104,25 @@ def openalex_pdfs(con, pid):
             + [l["landing_page_url"] for l in locs if l.get("is_oa") and l.get("landing_page_url")])
 
 
-def fetch(con, slug, status, paper):
+RETRY_DAYS = 14  # 이 기간 안에 시도해 못 받은 논문은 다시 시도하지 않는다 (막힌 사이트는 대개 계속 막힘)
+
+
+def fetch(con, slug, status, paper, retry=False):
     q = "SELECT id,doi,oa_url,title FROM papers WHERE pdf_path IS NULL AND "
-    rows = con.execute(q + "id=?", (paper,)).fetchall() if paper else con.execute(q + "(status=? OR favorite=1)", (status,)).fetchall()
+    if paper:
+        rows = con.execute(q + "id=?", (paper,)).fetchall()
+    else:
+        rows = con.execute(q + "(status=? OR favorite=1)", (status,)).fetchall()
+        cut = (datetime.datetime.now() - datetime.timedelta(days=RETRY_DAYS)).isoformat(timespec="seconds")
+        recent = [] if retry else [r for r in rows if (con.execute("SELECT ft_tried FROM papers WHERE id=?", (r["id"],))
+                                                        .fetchone()[0] or "") > cut]
+        if recent:
+            print(f"최근 {RETRY_DAYS}일 안에 시도한 {len(recent)}편은 건너뜁니다 (다시 하려면 --retry)", flush=True)
+            skip = {r["id"] for r in recent}
+            rows = [r for r in rows if r["id"] not in skip]
     ok = 0
-    for r in rows:
+    for i, r in enumerate(rows, 1):
+        print(f"[{i}/{len(rows)}] #{r['id']} {(r['title'] or '')[:50]}", flush=True)
         urls = ([r["oa_url"]] if r["oa_url"] else []) + openalex_pdfs(con, r["id"]) + unpaywall_urls(r["doi"]) + s2_pdfs(r["doi"])
         urls = [u for u in urls if not any(d in urllib.parse.urlparse(u).netloc for d in NO_BOT)]
         dest = project_dir(slug) / "pdf" / fname(r["id"], r["doi"])
@@ -133,9 +147,11 @@ def fetch(con, slug, status, paper):
         else:
             if blocked and not r["oa_url"]:  # 무료 원문은 있는데 사이트가 프로그램 접속을 막은 경우: 화면에서 직접 열도록 남긴다
                 con.execute("UPDATE papers SET oa_url=? WHERE id=?", (blocked[0], r["id"]))
-                con.commit()
+            result = "접속 차단" if blocked else "무료본 없음" if not urls else "받기 실패"
+            con.execute("UPDATE papers SET ft_tried=?, ft_result=? WHERE id=?", (now(), result, r["id"]))
+            con.commit()
             print(f"  #{r['id']} " + ("무료 원문이 있으나 자동 다운로드가 막힘 → 브라우저로 직접" if blocked else "OA 원문 없음 → 도서관으로"))
-    print(f"원문 확보 {ok}/{len(rows)}")
+    print(f"원문 확보 {ok}/{len(rows)}", flush=True)
 
 
 def library_link(doi, url=None):
@@ -189,10 +205,11 @@ if __name__ == "__main__":
     ap.add_argument("--status", default="shortlist")
     ap.add_argument("--paper", type=int)
     ap.add_argument("--file", nargs="+")
+    ap.add_argument("--retry", action="store_true", help="최근에 시도한 논문도 다시")
     a = ap.parse_args()
     con = connect(a.project)
     if a.cmd == "fetch":
-        fetch(con, a.project, a.status, a.paper)
+        fetch(con, a.project, a.status, a.paper, a.retry)
     elif a.cmd == "attach":
         for f in a.file:
             attach(con, a.project, f, a.paper)

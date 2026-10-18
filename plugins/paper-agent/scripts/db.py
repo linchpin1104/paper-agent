@@ -45,7 +45,9 @@ PAPER_EXTRA = [("tier", "TEXT"), ("reason", "TEXT"), ("local_cites", "INTEGER"),
                # 검토: 사람이 원문을 보고 확인한 결과. title_check 는 PDF 첫 쪽에 기록된 제목이 있는지 자동 검사
                ("review", "TEXT"), ("review_note", "TEXT"), ("reviewed_at", "TEXT"), ("title_check", "TEXT"),
                # 내 논문에서 이 논문이 맡는 역할(KEY_ROLES)과 그 쓰임·차이 한 줄
-               ("key_role", "TEXT"), ("key_role_note", "TEXT")]
+               ("key_role", "TEXT"), ("key_role_note", "TEXT"),
+               # 무료 원문 자동 받기: 마지막 시도 시각과 결과(접속 차단 / 무료본 없음 / 받기 실패). 최근 시도한 논문은 건너뛴다
+               ("ft_tried", "TEXT"), ("ft_result", "TEXT")]
 # 인용 관계 검증: 기록한 출처 목록, 검증 단계, 근거(원문 쪽·문구)
 EDGE_EXTRA = [("sources", "TEXT"), ("verified", "TEXT"), ("evidence", "TEXT")]
 NOTE_EXTRA = [("quote_ok", "INTEGER"), ("checked", "INTEGER")]

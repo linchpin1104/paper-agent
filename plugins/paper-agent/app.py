@@ -1,5 +1,5 @@
 """논문 프로젝트 페이지.  실행: streamlit run app.py"""
-import base64, html, json, os, pathlib, re, shutil, subprocess, sys
+import base64, html, json, os, pathlib, re, shutil, subprocess, sys, time
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -89,6 +89,23 @@ def analysis_box(slug):
 
 
 # ── 학회지 구독 (프로젝트와 별개) ───────────────────────────
+def run_live(*args):
+    """오래 걸리는 스크립트를 진행 막대와 함께 돌린다. 스크립트가 '[i/n]' 줄을 찍으면 그만큼 막대가 찬다."""
+    args = [str(ROOT / a) if a.startswith("scripts/") else a for a in args]
+    bar, log = st.progress(0.0, text="시작하는 중…"), []
+    p = subprocess.Popen([sys.executable, "-u", *args], cwd=db.HOME, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True)
+    for line in p.stdout:
+        log.append(line)
+        m = re.match(r"\[(\d+)/(\d+)\] (.*)", line)
+        if m:
+            i, n = int(m[1]), int(m[2])
+            bar.progress(i / n, text=f"{i}/{n}편 확인 중 · {m[3][:40]}")
+    p.wait()
+    bar.empty()
+    return "".join(log)[-4000:] or "(출력 없음)"
+
+
 def check_all(key):
     """체크 칸 표 위의 '모두 체크 / 모두 해제'. (기본값, 표 key) 를 돌려준다.
     누르면 표 key 를 바꿔 새로 그리므로, 그 표의 체크 칸이 한꺼번에 바뀐다. 기본값 None = 원래 기본값."""
@@ -589,12 +606,46 @@ def paper_list():
         nopdf = sum(r["status"] not in groups for r in rows)
         with st.expander(f"원문 모으기 · 없음 {nopdf}편", expanded="ft_log" in st.session_state or 0 < nopdf == len(rows)):
             if st.button("무료 원문 자동으로 받기", width="stretch",
-                         help="OpenAlex·Unpaywall·Semantic Scholar 가 아는 무료 원문(저자 홈페이지·기관 저장소·arXiv 등)"):
-                st.session_state["ft_log"] = run("scripts/fulltext.py", "fetch", *P)
+                         help="OpenAlex·Unpaywall·Semantic Scholar 가 아는 무료 원문(저자 홈페이지·기관 저장소·arXiv 등). "
+                              "14일 안에 시도해 못 받은 논문은 건너뜁니다"):
+                retry = ["--retry"] if st.session_state.get("ft_retry") else []
+                st.session_state["ft_log"] = run_live("scripts/fulltext.py", "fetch", *P, *retry)
                 st.rerun()  # 목록 묶음(원문 있음/없음)을 새로 그린다. 결과는 아래에 다시 보여준다
+            st.checkbox("최근 시도한 논문도 다시", key="ft_retry",
+                        help="막힌 사이트는 대개 계속 막혀 있습니다. 시간이 오래 걸립니다")
             if "ft_log" in st.session_state:
                 st.code(st.session_state.pop("ft_log"))
-            st.caption("유료 논문은 도서관에서 받아 여기에 한꺼번에 끌어다 놓으세요. DOI·제목으로 어느 논문인지 맞춰 붙입니다.")
+            # 원문 없는 논문: 자동 받기 결과별로 묶고 도서관 경유 링크를 붙인다. 브라우저로 받아 아래에 한꺼번에 올린다
+            miss = con.execute("SELECT id, title, year, doi, url, ft_result FROM papers WHERE pdf_path IS NULL AND "
+                               "(status IN ('shortlist','fulltext','analyzed') OR favorite=1)").fetchall()
+            if miss:
+                order = {"접속 차단": 0, "받기 실패": 1, "무료본 없음": 2, None: 3}
+                st.dataframe([{"결과": r["ft_result"] or "아직 시도 안 함",
+                               "논문": f"{r['year'] or ''} {r['title']}", "열기": library_link(r["doi"], r["url"]) or None}
+                              for r in sorted(miss, key=lambda r: order.get(r["ft_result"], 3))],
+                             hide_index=True, height=240, width="stretch", column_order=["결과", "열기", "논문"],
+                             column_config={"열기": st.column_config.LinkColumn("열기", display_text="열기", width="small"),
+                                            "결과": st.column_config.TextColumn("결과", width="small")})
+                st.caption("'접속 차단'은 무료본이 있지만 사이트가 프로그램 접속을 막은 논문입니다. "
+                           "'열기'로 브라우저에서 받으세요(도서관 경유). 받은 PDF 는 아래에 한꺼번에 끌어다 놓으면 "
+                           "DOI·제목으로 어느 논문인지 맞춰 붙입니다.")
+                # 브라우저 에이전트(Aside 등)에 그대로 붙여 넣을 작업 목록. 받은 PDF 는 다운로드 폴더에서 가져온다
+                todo = [r for r in miss if (r["doi"] or r["url"])]
+                brief = ("아래 논문의 PDF 를 차례로 열어 다운로드 폴더에 받아 주세요.\n"
+                         "- 링크는 학교 도서관을 거쳐 열립니다. 도서관 로그인이 필요하면 멈추고 알려 주세요.\n"
+                         "- 사람 확인(CAPTCHA)·약관 동의 화면이 나오면 누르지 말고 멈추고 알려 주세요.\n"
+                         "- PDF 가 없거나 구독이 안 되는 논문은 건너뛰고, 끝나면 받은 것과 못 받은 것을 목록으로 알려 주세요.\n\n"
+                         + "\n".join(f"{i}. {r['title']} ({r['year'] or ''})\n   {library_link(r['doi'], r['url'])}"
+                                      for i, r in enumerate(todo, 1)))
+                st.download_button(f"브라우저 에이전트용 목록 받기 ({len(todo)}편)", brief, file_name=f"{slug}_원문받기.txt",
+                                   width="stretch", help="Aside 같은 브라우저 에이전트에 이 파일 내용을 그대로 붙여 넣으면 됩니다")
+            dl = pathlib.Path.home() / "Downloads"
+            recent = [f for f in dl.glob("*.pdf") if time.time() - f.stat().st_mtime < 3 * 86400] if dl.exists() else []
+            if st.button(f"다운로드 폴더에서 가져오기 (최근 3일 PDF {len(recent)}개)", width="stretch", disabled=not recent,
+                         help="최근 3일 사이 다운로드 폴더에 받은 PDF 를 DOI·제목으로 이 프로젝트의 논문에 맞춰 붙입니다. "
+                              "맞는 논문이 없는 PDF 는 건드리지 않습니다"):
+                st.session_state["ft_log"] = run("scripts/fulltext.py", "attach", *P, "--file", *map(str, recent))
+                st.rerun()
             ups = st.file_uploader("PDF 여러 개", type="pdf", accept_multiple_files=True, key="bulk_pdf",
                                    label_visibility="collapsed")
             if ups and st.button(f"{len(ups)}개 등록", width="stretch"):
