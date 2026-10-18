@@ -1,6 +1,7 @@
 """원문 PDF 수집과 쪽 단위 텍스트 추출.
   python scripts/fulltext.py fetch  --project SLUG [--status shortlist] [--paper ID] [--retry]   # OA 자동 다운로드 (읽을 목록 + 핵심 논문). 14일 안에 시도한 논문은 --retry 없으면 건너뜀
-  python scripts/fulltext.py attach --project SLUG [--paper ID] --file a.pdf [b.pdf …]  # 도서관에서 받은 PDF 등록. --paper 없으면 DOI·제목으로 자동 짝짓기
+  python scripts/fulltext.py attach --project SLUG [--paper ID] --file a.pdf [b.pdf …]  # 도서관에서 받은 PDF 등록. --paper 없으면 DOI·제목으로 자동 짝짓기,
+                                   [--add-new]                                          # 목록에 없는 논문이면 PDF 의 DOI·제목으로 찾아 새로 등록하고 읽을 목록에 넣는다
   python scripts/fulltext.py missing --project SLUG                                     # 원문 못 받은 shortlist 와 링크
 """
 import argparse, datetime, json, pathlib, re, shutil, sys, time, urllib.error, urllib.parse, urllib.request
@@ -172,14 +173,61 @@ def match(con, pages):
     return hits[0] if len(hits) == 1 else None  # 둘 이상이면 모호하니 사람에게
 
 
-def attach(con, slug, src, paper=None):
+def pdf_title(pdf):
+    """첫 쪽에서 가장 큰 글씨 줄(대개 제목). PDF 정보의 제목이 그럴듯하면 그것."""
+    try:
+        import fitz
+        with fitz.open(pdf) as doc:
+            meta = (doc.metadata or {}).get("title") or ""
+            spans = [(round(sp["size"], 1), sp["text"].strip()) for b in doc[0].get_text("dict")["blocks"]
+                     for ln in b.get("lines", []) for sp in ln["spans"] if sp["text"].strip()]
+    except Exception:
+        return ""
+    if len(re.findall(r"[A-Za-z가-힣]+", meta)) >= 4:
+        return meta
+    if not spans:
+        return ""
+    big = max(sz for sz, t in spans if len(t) > 3) if any(len(t) > 3 for _, t in spans) else 0
+    return " ".join(t for sz, t in spans if sz == big)[:300]
+
+
+def identify(con, pdf, pages):
+    """목록에 없는 논문의 PDF: 첫 2쪽의 DOI → 없으면 제목으로 OpenAlex 에서 찾는다.
+    찾은 논문의 제목이 PDF 첫 2쪽에 실제로 있어야 등록한다(엉뚱한 논문 방지). 등록하면 읽을 목록에 넣고 id 를 돌려준다."""
+    import seeds
+    import fetch_openalex as oa
+    head = " ".join(pages[:2])
+    m = re.search(r"10\.\d{4,9}/[^\s\"<>]+", head)
+    queries = ([m.group(0).rstrip(".,;)]")] if m else []) + ([t] if (t := pdf_title(pdf)) else [])
+    for q in queries:
+        for c in seeds.find(q)[:3]:
+            if c["title"] and has_title(pages, c["title"]):
+                w = oa.get(f"/works/{c['openalex']}")
+                pid = w and oa.upsert_works(con, [w]).get(oa.oid(w))
+                if pid:
+                    con.execute("UPDATE papers SET status='shortlist' WHERE id=? AND status='candidate'", (pid,))
+                    con.commit()
+                    print(f"  목록에 없던 논문을 찾아 등록: #{pid} {c['year']} {c['title'][:80]} → 읽을 목록")
+                    return pid
+    return None
+
+
+def attach(con, slug, src, paper=None, add_new=False):
+    """add_new: 목록에 없는 논문이면 PDF 의 DOI·제목으로 찾아 새로 등록한다(사람이 직접 고른 파일에만 쓴다)."""
     src = pathlib.Path(src).expanduser()
     if src.read_bytes()[:4] != b"%PDF":
         print(f"  {src.name}: PDF 가 아닙니다")
         return
-    paper = paper or match(con, extract_pages(src))
+    pages = extract_pages(src)
+    chosen = paper  # 사람이 논문을 골라 올렸으면 원문을 바꿀 수 있다
+    paper = paper or match(con, pages) or (add_new and identify(con, src, pages))
     if not paper:
-        print(f"  {src.name}: 어느 논문인지 못 찾음 → 읽기 화면에서 그 논문을 골라 올리세요")
+        print(f"  {src.name}: " + ("어느 논문인지 못 찾음 (PDF 에서 DOI·제목을 읽지 못했거나 OpenAlex 에 없음) → "
+                                   "찾기 탭에서 그 논문을 먼저 등록하거나, 읽기 화면에서 그 논문을 골라 올리세요" if add_new
+                                   else "이 프로젝트 목록에 없는 논문이라 건너뜀"))
+        return
+    if not chosen and con.execute("SELECT pdf_path FROM papers WHERE id=?", (paper,)).fetchone()[0]:
+        print(f"  {src.name}: #{paper} 는 이미 원문이 있습니다. 바꾸려면 읽기 화면에서 그 논문에 올리세요")
         return
     doi = con.execute("SELECT doi FROM papers WHERE id=?", (paper,)).fetchone()["doi"]
     dest = project_dir(slug) / "pdf" / fname(paper, doi)
@@ -206,12 +254,13 @@ if __name__ == "__main__":
     ap.add_argument("--paper", type=int)
     ap.add_argument("--file", nargs="+")
     ap.add_argument("--retry", action="store_true", help="최근에 시도한 논문도 다시")
+    ap.add_argument("--add-new", action="store_true", help="attach: 목록에 없는 논문이면 찾아 새로 등록하고 읽을 목록에 넣는다")
     a = ap.parse_args()
     con = connect(a.project)
     if a.cmd == "fetch":
         fetch(con, a.project, a.status, a.paper, a.retry)
     elif a.cmd == "attach":
         for f in a.file:
-            attach(con, a.project, f, a.paper)
+            attach(con, a.project, f, a.paper, a.add_new)
     else:
         missing(con)

@@ -693,8 +693,6 @@ def paper_list():
     """읽기 화면 왼쪽 고정 목록. 분석됨 / 원문 있음 / 원문 없음으로 묶고, 묶음 안에서 핵심 논문(★)이 위."""
     rows = con.execute("SELECT id, title, year, authors, status, favorite, anchor FROM papers "
                        "WHERE status IN ('shortlist','fulltext','analyzed') OR favorite=1").fetchall()
-    if not rows:
-        return None
     groups = {"analyzed": "분석됨", "fulltext": "원문 있음"}
     rows = sorted(rows, key=lambda r: (list(groups).index(r["status"]) if r["status"] in groups else 2,
                                        -(r["anchor"] or 0), -r["favorite"], -(r["year"] or 0)))
@@ -708,7 +706,7 @@ def paper_list():
                     "section[data-testid=stSidebar] [data-testid=stCaptionContainer]{margin:.9rem 0 .2rem .5rem}</style>", unsafe_allow_html=True)
         st.markdown("**논문**")
         nopdf = sum(r["status"] not in groups for r in rows)
-        with st.expander(f"원문 모으기 · 없음 {nopdf}편", expanded="ft_log" in st.session_state or 0 < nopdf == len(rows)):
+        with st.expander(f"원문 모으기 · 없음 {nopdf}편", expanded="ft_log" in st.session_state or nopdf == len(rows)):
             if st.button("무료 원문 자동으로 받기", width="stretch",
                          help="OpenAlex·Unpaywall·Semantic Scholar 가 아는 무료 원문(저자 홈페이지·기관 저장소·arXiv 등). "
                               "14일 안에 시도해 못 받은 논문은 건너뜁니다"):
@@ -732,7 +730,7 @@ def paper_list():
                                             "결과": st.column_config.TextColumn("결과", width="small")})
                 st.caption("'접속 차단'은 무료본이 있지만 사이트가 프로그램 접속을 막은 논문입니다. "
                            "'열기'로 브라우저에서 받으세요(도서관 경유). 받은 PDF 는 아래에 한꺼번에 끌어다 놓으면 "
-                           "DOI·제목으로 어느 논문인지 맞춰 붙입니다.")
+                           "DOI·제목으로 어느 논문인지 맞춰 붙입니다. 목록에 없는 논문이면 찾아서 새로 등록하고 읽을 목록에 넣습니다.")
                 # 브라우저 에이전트(Aside 등)에 그대로 붙여 넣을 작업 목록. 받은 PDF 는 다운로드 폴더에서 가져온다
                 todo = [r for r in miss if (r["doi"] or r["url"])]
                 brief = ("아래 논문의 PDF 를 차례로 열어 다운로드 폴더에 받아 주세요.\n"
@@ -759,10 +757,13 @@ def paper_list():
                 for f in ups:
                     (tmp / f.name).write_bytes(f.getvalue())
                     files.append(str(tmp / f.name))
-                st.session_state["ft_log"] = run("scripts/fulltext.py", "attach", *P, "--file", *files)
+                st.session_state["ft_log"] = run("scripts/fulltext.py", "attach", *P, "--add-new", "--file", *files)
                 shutil.rmtree(tmp, ignore_errors=True)
                 st.rerun()
         analysis_box(slug)
+        if not rows:
+            st.caption("PDF 를 위에 올리면 논문을 찾아 읽을 목록에 넣습니다.")
+            return None
         q = st.text_input("찾기", key="rd_q", placeholder="제목·저자", label_visibility="collapsed").lower()
         shown = [r for r in rows if not q or q in (r["title"] + " " + (r["authors"] or "")).lower()]
         if not shown:
@@ -1180,7 +1181,7 @@ def reader(pid, p, ft):
 if sec == "읽기":
     pid = paper_list()
     if pid is None:
-        st.info("'찾기'에서 읽을 논문을 읽을 목록에 넣으면 여기 왼쪽 목록에 나옵니다.")
+        st.info("'찾기'에서 읽을 논문을 읽을 목록에 넣거나, 가지고 있는 논문 PDF 를 왼쪽 '원문 모으기'에 올리면 여기 목록에 나옵니다.")
     else:
         p = con.execute("SELECT * FROM papers WHERE id=?", (pid,)).fetchone()
         link = library_link(p["doi"], p["url"])
