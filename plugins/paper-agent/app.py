@@ -398,15 +398,18 @@ def screen_ui():
 def seed_ui():
     st.caption("① 핵심 논문을 먼저 정하고 ② 그 논문들의 인용 관계를 따라 연관 논문으로 넓힙니다. "
                "관계마다 그 인용이 실제로 있는지 검증 단계를 붙이고, 원문을 본 사람이 최종 확인합니다.")
-    seeds = con.execute("SELECT id, title, year, venue, authors, doi, review FROM papers WHERE favorite=1 ORDER BY year").fetchall()
+    # 역할을 정한 논문(기준·차별화 대상 등) → 초록 관련도 → 최신순. 핵심 논문이 많아도 기준 논문이 묻히지 않게
+    seeds = con.execute("SELECT id, title, year, venue, authors, doi, review, key_role, abs_score, status FROM papers WHERE favorite=1 "
+                        "ORDER BY key_role IS NULL, COALESCE(abs_score, -1) DESC, year DESC").fetchall()
     st.markdown(f"**① 핵심 논문 {len(seeds)}편**")
     if seeds:
         on, ekey = check_all(f"seeds_{slug}")
         rows = [dict(r, 빼기=bool(on), 저자=(r["authors"] or "").split(";")[0], 검토=r["review"] or "미검토",
+                     역할=r["key_role"] or "", 분석="분석됨" if r["status"] == "analyzed" else STATUS_KO.get(r["status"], r["status"]),
                      DOI=f"https://doi.org/{r['doi']}" if r["doi"] else None) for r in seeds]
         se = st.data_editor(rows, key=ekey, hide_index=True, width="stretch",
-                            column_order=["빼기", "title", "year", "저자", "venue", "검토", "DOI"],
-                            disabled=["title", "year", "저자", "venue", "검토", "DOI"],
+                            column_order=["빼기", "역할", "title", "year", "저자", "venue", "분석", "검토", "DOI"],
+                            disabled=["역할", "title", "year", "저자", "venue", "분석", "검토", "DOI"],
                             column_config={"빼기": st.column_config.CheckboxColumn("빼기", width="small"),
                                            "title": st.column_config.TextColumn("제목", width="large"),
                                            "year": "연도", "venue": "저널",

@@ -149,7 +149,8 @@ def build(slug):
     is_paper = lambda r: not NOT_PAPER.search(U(r["title"]))  # noqa: E731
 
     # ── 핵심 논문 ──
-    core = [r for r in con.execute("SELECT * FROM papers WHERE favorite=1 ORDER BY year") if is_paper(r)]
+    core = [r for r in con.execute("SELECT * FROM papers WHERE favorite=1 "
+                                   "ORDER BY key_role IS NULL, COALESCE(abs_score, -1) DESC, year DESC") if is_paper(r)]
     core_rows = "".join(
         f"<tr><td>{r['year'] or ''}</td><td>{e(U(r['title']))}</td><td>{e((U(r['authors'])).split(';')[0])}</td>"
         f"<td>{e(U(r['venue']))}</td><td>{e(r['key_role'] or '')}</td><td>{STATUS_KO.get(r['status'], r['status'])}</td></tr>" for r in core)
