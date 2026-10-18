@@ -57,9 +57,11 @@ def mod_groups(nodes, paths):
         for m, code, r in p["mods"]:
             g["lines"][m] = f"{m}  {code} {MARK.get(r, '')}".strip()
             g["results"].append(r)
+    on_path = {n for key in paths for n in key if n}  # 다른 가설에서 독립·종속·매개로도 쓰이면 상자를 남긴다
     for names in groups:
         for m in names:
-            nodes.pop(m, None)  # 개별 노드 대신 묶음 상자로
+            if m not in on_path:
+                nodes.pop(m, None)  # 개별 노드 대신 묶음 상자로
     return groups
 
 

@@ -30,31 +30,47 @@ model: claude-opus-5-5
 사용자가 이 논문에 남긴 메모(`db.py memos --paper ID`)가 있으면 먼저 읽고, `[해석] 내 연구와의 연결`에 반영한다.
 대상: `db.py list --status fulltext`. 사용자가 id 를 지정하면 그것만. 재분석이면 먼저 `db.py clear --paper ID`.
 
+### 깊이 — 프롬프트에 '빠르게'가 있으면 빠른 분석, 없으면 정밀 분석
+| | 빠른 분석 (한 편 5분 안팎) | 정밀 분석 (10분 안팎) |
+| --- | --- | --- |
+| 읽기 | 초록·서론 끝(연구 질문)·방법·결과·논의/한계 쪽만. 절 위치는 `db.py text` 앞부분과 쪽 머리로 찾는다 | 전체 |
+| 그림·표 | `figures.py detect` 만. 직접 보지 않는다 | 연구 모형·주요 결과 후보만 직접 본다(아래) |
+| 노트 항목 | 한 줄 요약, 연구질문, 이론 기반, 연구 모형, 가설 또는 명제, 표본·맥락, 측정 또는 자료, 분석 기법, 주요 결과, 한계, 향후 연구 제안, [해석] 내 연구와의 연결 (12개) | 20개 전부 |
+| 논증 흐름·변수·가설 | 채운다 | 채운다 |
+| 절 목차 | 생략 | 채운다 |
+빠른 분석에서 쓰지 않은 항목은 비워 둔다("원문에 명시 없음"으로 채우지 않는다). 나중에 정밀 분석으로 다시 할 수 있다.
+
+### 저장은 한 번에
+노트·변수·가설·논증 흐름·절 목차를 명령 하나씩 부르지 않는다. 다 쓴 뒤 JSON 파일 하나로 쓰고 한 번에 저장한다(Write 도구로 `projects/{slug}/export/_a{ID}.json`).
+`pa db.py load --project {slug} --paper ID --file projects/{slug}/export/_a{ID}.json`
+- 형식: `{"notes":[{"section","content","quote","page"}], "vars":[{"role","name","definition","measure","source","items","alpha","page"}], "hyps":[{"code","statement","iv","dv","mediator","moderator","direction","result","stats","page"}], "flow":[{"step","claim","page","fig"}], "outline":[{"heading","start","end","summary"}]}` — 빈 값은 빼도 된다.
+- 결과에 '건너뜀'이나 '경고: 인용문…'이 나오면 그 줄만 고쳐 새 파일로 다시 load 한다(같은 항목이 두 번 들어가지 않게 고친 줄만 담는다).
+- 아래 '저장 도구'의 note·var·hyp·flow·outline 명령은 한두 개를 고칠 때만 쓴다.
+
 ### 읽기
-- `pa db.py text --project {slug} --paper ID` 로 **전체**를 읽는다. 초록·서론만 읽고 쓰지 않는다.
+- 정밀 분석: `pa db.py text --project {slug} --paper ID` 로 **전체**를 읽는다. 초록·서론만 읽고 쓰지 않는다. 빠른 분석: 위 '깊이' 표의 쪽만 읽는다.
 - 길면 쪽 범위를 나눠 읽는다 (`... | sed -n '/=== p.5 ===/,/=== p.12 ===/p'`). 표·부록의 측정 문항과 결과표까지 본다.
 
 ### 첫 화면 재료 (가장 먼저) — 사람이 논문을 처음 열었을 때 보는 것
 **1) 원문 그림·표**
 - `pa figures.py detect --project {slug} --paper ID` → `figures.py list` 로 목록 확인
-- 그림·표마다 `pa figures.py png --project {slug} --id FID --out projects/{slug}/export/_figcheck/fFID.png` 로 잘라낸 이미지를 **Read 로 직접 본다**. (폴더가 없으면 먼저 `mkdir -p`)
+- 캡션으로 연구 모형·주요 결과일 가능성이 있는 그림·표만(보통 2~4개) `pa figures.py png --project {slug} --id FID --out projects/{slug}/export/_figcheck/fFID.png` 로 잘라 **Read 로 직접 본다**. (폴더가 없으면 먼저 `mkdir -p`) 기술통계·적합도 같은 참고용 표는 보지 않고 캡션으로 역할만 정한다.
 - 잘림이 틀렸으면(머리글 섞임, 표 일부 누락) `figures.py set --id FID --bbox x0,y0,x1,y1` 로 고친다. 좌표는 PDF 포인트. `db.py text` 와 이미지로 경계를 판단한다.
 - 역할을 정한다: `figures.py set --id FID --role "연구 모형|주요 결과|과정|기타" --note "이 그림·표가 보여주는 것 1문장"`
   - 연구 모형: 저자의 가설 모형·개념 틀 그림
   - 주요 결과: 가설 검정 결과표, 경로 계수가 표시된 모형, 조절·매개 효과 그래프, 리뷰의 핵심 클러스터·지도
   - 과정: 연구 절차, 표집·문헌 선별 흐름, 분석 단계 그림
   - 기타: 기술통계·적합도처럼 참고용
-- 자동 판정은 캡션 키워드 기준이라 자주 틀린다. 전부 다시 판단한다.
+- 자동 판정은 캡션 키워드 기준이라 자주 틀린다. 정밀 분석에서는 직접 본 그림·표의 역할을 다시 정한다. 빠른 분석에서는 detect 결과를 그대로 둔다.
 - **그림 안의 글자(절차도의 검색식·표본 수, 모형 그림의 변수명 등)는 `db.py text` 에 나오지 않는다.** "원문에 명시 없음"이라고 쓰기 전에 그림·표 이미지를 확인한다.
 
-**2) 논증 흐름 (9단계, 단계당 1개)**
-- `pa db.py flow --project {slug} --paper ID --step 단계 --claim "1~2문장" --page N [--fig "Figure 1"]`
+**2) 논증 흐름 (9단계, 단계당 1개)** — 저장 JSON 의 "flow" 에 담는다
 - 단계: 문제의식 → 연구 공백 → 연구 목적 → 이론적 근거 → 가설·주장 → 연구 방법 → 핵심 발견 → 기여 → 한계·과제
 - 각 claim 은 앞 단계를 받아 이어지는 서사로 쓴다. 읽는 사람이 9줄만 보고 "왜 이 연구를 했고, 무엇을 근거로, 무엇을 보였고, 그래서 무엇이 새로운지" 이해해야 한다.
 - 수치를 넣는다 (n, 핵심 계수, 클러스터 수 등). 저자의 주장과 실제 결과가 다르면 핵심 발견에 그 차이를 적는다.
 - 해당 단계를 보여주는 원문 그림·표가 있으면 `--fig` 에 라벨("Figure 1", "Table 7")을 단다. 가설·주장 → 연구 모형 그림, 핵심 발견 → 결과표가 기본.
 
-**3) 절 목차** — `db.py outline` 으로 절 제목·쪽·요지. (보조 자료)
+**3) 절 목차** — 저장 JSON 의 "outline" 에 절 제목·쪽·요지. (보조 자료. 빠른 분석에서는 생략)
 
 ### 저장 도구
 - 노트: `db.py note --paper ID --section "항목" --content "..." [--quote "원문 그대로" --page N]`

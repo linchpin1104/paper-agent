@@ -1,7 +1,7 @@
 ---
 name: analyze
 description: 읽을 목록 중 원문이 있는 논문을 researcher 에이전트로 심층 분석한다. 논증 흐름, 원문 그림·표, 20개 항목, 가설·변수를 원문 인용과 쪽수로 정리한다. 인자가 "갭"이면 쌓인 분석과 내 메모로 연구 갭·가설을 찾고, "설계"면 어떤 이론·방법론으로 연구를 진행할지 추천한다.
-argument-hint: "[논문 id 여러 개 | 갭 | 설계]"
+argument-hint: "[빠르게] [논문 id 여러 개] | 갭 | 설계"
 allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/bin/pa" *), Bash(ls *), Bash(sqlite3 *)
 ---
 
@@ -16,7 +16,8 @@ allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/bin/pa" *), Bash(ls *), Bash(sqlite3 
    - 없으면 `pa db.py list --project {slug} --status fulltext` 의 논문을 대상으로 한다.
    - 원문이 없는 읽을 목록 논문은 `pa fulltext.py missing --project {slug}` 로 링크를 보여주고, 도서관에서 받아 '읽기' 탭에 올리도록 안내한다.
 4. 논문마다 `paper-agent:researcher` 에이전트를 하나씩 띄운다. 동시에 최대 3개까지 띄운다.
-   - 프롬프트: "프로젝트 {slug}, 논문 #{id} 심층 분석. 지침의 '첫 화면 재료'와 '2. 심층 분석'을 그대로 따른다. 사용자 메모(db.py memos --paper)를 먼저 읽는다. export_html.py 는 실행하지 않는다. 보고: 노트·가설·변수 수, 핵심 발견 1줄, 방법론 약점 1줄."
+   - 사용자가 '빠르게'라고 했으면 프롬프트 앞에 "빠르게:"를 붙인다(지침의 빠른 분석). 아니면 정밀 분석.
+   - 프롬프트: "프로젝트 {slug}, 논문 #{id} 심층 분석. 지침의 '첫 화면 재료'와 '2. 심층 분석'을 그대로 따른다. 사용자 메모(db.py memos --paper)를 먼저 읽는다. 저장은 JSON 한 파일로 db.py load 한 번에 한다. export_html.py 는 실행하지 않는다. 보고: 노트·가설·변수 수, 핵심 발견 1줄, 방법론 약점 1줄."
    - 모두 끝나면 `pa export_html.py --project {slug}` 로 보고서를 갱신한다.
    - 사용자에게 논문별 핵심 발견과 약점을 표로 알리고, '읽기' 탭에서 확인하라고 안내한다.
 5. 갭·가설

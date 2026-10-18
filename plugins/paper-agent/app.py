@@ -56,10 +56,10 @@ def analysis_running(slug):
 JOB_LABEL = {"갭": "갭·가설 찾기", "설계": "연구 설계 추천"}
 
 
-def start_analysis(slug, ids, cmd=None):
-    """백그라운드 분석. ids = 논문 심층 분석, cmd = '갭'·'설계' 같은 프로젝트 단위 작업."""
+def start_analysis(slug, ids, cmd=None, quick=False):
+    """백그라운드 분석. ids = 논문 심층 분석(quick=빠른 분석), cmd = '갭'·'설계' 같은 프로젝트 단위 작업."""
     pidf, idsf, logf = job_files(slug)
-    prompt = (f"/paper-agent:analyze {cmd or ' '.join(map(str, ids))}\n\n"
+    prompt = (f"/paper-agent:analyze {cmd or ('빠르게 ' if quick else '') + ' '.join(map(str, ids))}\n\n"
               f"프로젝트는 {slug}. 화면에서 시작한 백그라운드 작업이라 사용자에게 묻지 말고 끝까지 진행한다.\n"
               "이 작업에서는 pa 가 PATH 에 있다. 모든 pa 명령은 전체 경로 대신 `pa 스크립트.py …` 로 실행하고, "
               "researcher 에이전트 프롬프트 첫 줄에도 이 문장을 그대로 넣는다.")
@@ -105,14 +105,17 @@ def analysis_box(slug):
             st.button(f"핵심·역할 논문만 고르기 ({len(core)}편)", type="tertiary",
                       on_click=lambda: st.session_state.update({key: core}))
         picked = st.session_state.get(key) or []
+        depth = st.radio("분석 깊이", ["빠르게", "정밀하게"], horizontal=True, key="an_depth",
+                         help="빠르게: 핵심 12개 항목·논증 흐름·변수·가설, 한 편 5분 안팎. "
+                              "정밀하게: 원문 전체·20개 항목·그림 확인·절 목차, 한 편 10분 안팎. 핵심 논문 몇 편만 정밀하게 권장")
         if st.button(f"고른 {len(picked)}편 심층 분석 시작", type="primary", width="stretch", disabled=not picked,
-                     help="논문마다 분석 에이전트가 원문 전체를 읽고 논증 흐름·연구 모형·20개 항목·가설·변수를 원문 인용과 쪽수로 정리합니다"):
-            start_analysis(slug, picked)
+                     help="논문마다 분석 에이전트가 원문을 읽고 원문 인용과 쪽수로 정리합니다. 한 번에 3편씩"):
+            start_analysis(slug, picked, quick=depth == "빠르게")
             st.session_state.pop(key, None)
             st.rerun()
         if st.button(f"원문 있는 {len(rows)}편 전부 분석", width="stretch",
                      help=f"오래 걸립니다(대략 {len(rows) * 15 // 3 // 60}시간 이상). 사용량도 그만큼 씁니다"):
-            start_analysis(slug, list(by))
+            start_analysis(slug, list(by), quick=st.session_state.get("an_depth", "빠르게") == "빠르게")
             st.rerun()
     if logf.exists() and logf.stat().st_size:
         with st.expander("지난 분석 기록"):

@@ -17,8 +17,9 @@ CLI:
   python scripts/db.py role    --project SLUG --paper ID --role 차별화 대상 --content "쓰임·차이 1문장"   # 내 논문에서의 역할. --role 없음 = 지우기
   python scripts/db.py checkup --project SLUG              # 문헌 목록 점검: 연도·국내·역할 빈칸
   python scripts/db.py clear --project SLUG --paper ID                 # 그 논문의 노트·변수·가설 삭제 (재분석 전)
+  python scripts/db.py load  --project SLUG --paper ID --file a.json   # 분석 결과 한 번에 저장 (note·var·hyp·flow·outline 을 하나씩 부르는 대신)
 """
-import argparse, datetime, json, os, pathlib, re, sqlite3, sys
+import argparse, collections, datetime, json, os, pathlib, re, sqlite3, sys
 try:  # python.org 빌드는 시스템 인증서를 못 읽는다
     import certifi
     os.environ.setdefault("SSL_CERT_FILE", certifi.where())
@@ -264,7 +265,7 @@ def log_search(con, source, query, n):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["init", "list", "text", "note", "notes", "var", "hyp", "outline", "flow", "memos", "pick", "unpick", "reading", "clear", "role", "checkup"])
+    ap.add_argument("cmd", choices=["init", "list", "text", "note", "notes", "var", "hyp", "outline", "flow", "memos", "pick", "unpick", "reading", "clear", "role", "checkup", "load"])
     ap.add_argument("--project", required=True)
     ap.add_argument("--paper", type=int)
     ap.add_argument("--status")
@@ -277,9 +278,10 @@ def main():
     ap.add_argument("--alpha", type=float)
     ap.add_argument("--start", type=int)
     ap.add_argument("--end", type=int)
+    ap.add_argument("--file")
     a = ap.parse_args()
     con = connect(a.project)
-    if a.cmd in ("note", "var", "hyp", "outline", "flow", "notes", "text", "clear", "pick", "unpick", "role") and not a.paper:
+    if a.cmd in ("note", "var", "hyp", "outline", "flow", "notes", "text", "clear", "pick", "unpick", "role", "load") and not a.paper:
         sys.exit("--paper 필요")
     if a.cmd == "init":
         print("ok", project_dir(a.project) / "library.db")
@@ -350,6 +352,8 @@ def main():
             print(f"\n[{t}] {len(rows)}편")
             for r in rows:
                 print(f"  #{r['id']} {r['year']} {r['title'][:80]} — {r['venue'] or ''} (후보 인용 {r['local_cites'] or 0})\n     {r['reason']}")
+    elif a.cmd == "load":
+        load(con, a.paper, a.file)
     elif a.cmd == "role":
         if a.role != "없음" and a.role not in KEY_ROLES:
             sys.exit(f"--role 은 {list(KEY_ROLES)} 또는 '없음'")
@@ -409,6 +413,68 @@ def quote_on_page(con, pid, page, quote):
         return False
     norm = lambda t: re.sub(r"\s+", " ", t.replace("\xad", "").replace("-\n", "")).strip().lower()
     return norm(quote) in norm(pages[page - 1])
+
+
+def load(con, pid, path):
+    """분석 결과 JSON 한 파일을 한 번에 저장. 형식:
+    {"notes":[{"section","content","quote"?,"page"?}], "vars":[{"role","name","definition"?,"measure"?,"source"?,"items"?,"alpha"?,"page"?}],
+     "hyps":[{"code","statement","iv"?,"dv"?,"mediator"?,"moderator"?,"direction"?,"result"?,"stats"?,"page"?}],
+     "flow":[{"step","claim","page"?,"fig"?}], "outline":[{"heading","start","end"?,"summary"?}]}
+    항목 이름·역할·단계가 틀리면 그 줄만 건너뛰고 알린다. 인용문은 쪽 원문과 대조한다."""
+    d = json.loads(pathlib.Path(path).read_text())
+    bad, warn, n = [], [], collections.Counter()
+    for x in d.get("notes", []):
+        if x.get("section") not in SECTIONS or not x.get("content"):
+            bad.append(f"note {x.get('section')!r}")
+            continue
+        q, pg = x.get("quote"), x.get("page")
+        ok = quote_on_page(con, pid, int(pg), q) if (q and pg) else None
+        if ok is False:
+            warn.append(f"{x['section']} p.{pg}: {q[:60]}")
+        con.execute("INSERT INTO notes(paper_id,section,content,quote,page,created_at,quote_ok) VALUES(?,?,?,?,?,?,?)",
+                    (pid, x["section"], x["content"], q, pg, now(), ok))
+        n["노트"] += 1
+    for x in d.get("vars", []):
+        if x.get("role") not in ROLES or not x.get("name"):
+            bad.append(f"var {x.get('name')!r} role={x.get('role')!r}")
+            continue
+        con.execute("INSERT INTO variables(paper_id,role,name,definition,measure,source,items,alpha,page) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (pid, x["role"], x["name"], x.get("definition"), x.get("measure"), x.get("source"), x.get("items"), x.get("alpha"), x.get("page")))
+        n["변수"] += 1
+    for x in d.get("hyps", []):
+        if not (x.get("code") and x.get("statement")):
+            bad.append(f"hyp {x.get('code')!r}")
+            continue
+        con.execute("INSERT INTO hypotheses(paper_id,code,statement,iv,dv,mediator,moderator,direction,result,stats,page) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (pid, x["code"], x["statement"], x.get("iv"), x.get("dv"), x.get("mediator"), x.get("moderator"),
+                     x.get("direction"), x.get("result"), x.get("stats"), x.get("page")))
+        n["가설"] += 1
+    for x in d.get("flow", []):
+        if x.get("step") not in FLOW or not x.get("claim"):
+            bad.append(f"flow {x.get('step')!r}")
+            continue
+        con.execute("DELETE FROM flow WHERE paper_id=? AND step=?", (pid, x["step"]))
+        con.execute("INSERT INTO flow(paper_id,step,claim,page,fig) VALUES(?,?,?,?,?)", (pid, x["step"], x["claim"], x.get("page"), x.get("fig")))
+        n["흐름"] += 1
+    for x in d.get("outline", []):
+        if not (x.get("heading") and x.get("start")):
+            bad.append(f"outline {x.get('heading')!r}")
+            continue
+        con.execute("INSERT INTO outline(paper_id,heading,page_start,page_end,summary) VALUES(?,?,?,?,?)",
+                    (pid, x["heading"], x["start"], x.get("end") or x["start"], x.get("summary")))
+        n["목차"] += 1
+    if n["노트"]:
+        mark_analyzed(con, pid)
+    con.commit()
+    have = {r[0] for r in con.execute("SELECT DISTINCT section FROM notes WHERE paper_id=?", (pid,))}
+    print("저장: " + " · ".join(f"{k} {v}" for k, v in n.items()))
+    if bad:
+        print("건너뜀(이름·역할·단계 확인): " + "; ".join(bad))
+        print(f"  section 은 {SECTIONS} 중, role 은 {ROLES} 중, step 은 {FLOW} 중")
+    for w in warn:
+        print("경고: 인용문이 그 쪽 원문에서 그대로 찾아지지 않음 — " + w)
+    missing = [x for x in SECTIONS if x not in have]
+    print("비어 있는 항목: " + (", ".join(missing) if missing else "없음"))
 
 
 def mark_analyzed(con, pid):
