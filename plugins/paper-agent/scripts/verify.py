@@ -52,16 +52,28 @@ def find_ref(reftext, last, year, window=250):
 VERSION_HINTS = r"working paper|discussion paper|preprint|accepted manuscript|author accepted|pre-print|ssrn|nber working|this is the author"
 
 
+DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>,;]+")
+
+
+def other_doi(head, doi):
+    """PDF 첫 쪽들에 DOI 가 찍혀 있는데 이 논문의 DOI 가 그중에 없으면 True (다른 논문 PDF). DOI 가 안 보이면 판단하지 않는다."""
+    if not doi:
+        return False
+    found = {d.rstrip(".)]").lower() for d in DOI_RE.findall(head)}
+    return bool(found) and doi.lower() not in found and not any(doi.lower() in d or d in doi.lower() for d in found)
+
+
 def title_check(con, pid):
     """PDF 첫 2쪽에 기록된 제목의 앞 8단어가 있는지(엉뚱한 PDF 방지) + 원고본(워킹페이퍼·프리프린트)인지.
     결과: 일치 / 일치·원고본 / 불일치. 원고본은 쪽 번호·문장이 출판본과 다를 수 있어 인용 전에 출판본 확인이 필요하다."""
-    r = con.execute("SELECT p.title, f.pages FROM papers p JOIN fulltext f ON f.paper_id=p.id WHERE p.id=?", (pid,)).fetchone()
+    r = con.execute("SELECT p.title, p.doi, f.pages FROM papers p JOIN fulltext f ON f.paper_id=p.id WHERE p.id=?", (pid,)).fetchone()
     if not r:
         return None
     squash = lambda s: re.sub(r"[^a-z0-9가-힣]", "", plain(s))  # 띄어쓰기·하이픈 차이 무시 (Start-Up = Startup)
     head_raw = plain(" ".join(json.loads(r["pages"])[:2]))
     words = re.findall(r"[a-z0-9가-힣]+", plain(r["title"]))[:8]
-    ok = squash(" ".join(words)) in squash(head_raw)
+    # 제목이 짧으면 다른 논문 제목 속에 들어 있을 수 있다(예: 'Consequences of abusive supervision'). 찍힌 DOI 가 다르면 불일치
+    ok = squash(" ".join(words)) in squash(head_raw) and not other_doi(head_raw, r["doi"])
     res = ("일치·원고본" if re.search(VERSION_HINTS, head_raw[:3000]) else "일치") if ok else "불일치"
     con.execute("UPDATE papers SET title_check=? WHERE id=?", (res, pid))
     return res

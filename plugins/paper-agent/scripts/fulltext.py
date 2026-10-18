@@ -84,11 +84,13 @@ def s2_pdfs(doi):
     return [url] if url else []
 
 
-def has_title(pages, title):
+def has_title(pages, title, doi=None):
     """첫 2쪽에 제목 앞 8단어가 있는가 (띄어쓰기·하이픈 무시). 엉뚱한 PDF 를 붙이지 않으려고."""
     from verify import plain
     squash = lambda t: re.sub(r"[^a-z0-9가-힣]", "", plain(t))
-    return squash(" ".join(re.findall(r"[a-z0-9가-힣]+", plain(title))[:8])) in squash(" ".join(pages[:2]))
+    from verify import other_doi
+    head = " ".join(pages[:2])
+    return squash(" ".join(re.findall(r"[a-z0-9가-힣]+", plain(title))[:8])) in squash(head) and not other_doi(plain(head), doi)
 
 
 def openalex_pdfs(con, pid):
@@ -132,7 +134,7 @@ def fetch(con, slug, status, paper, retry=False):
             try:
                 if not download(u, dest):
                     continue
-                if not has_title(extract_pages(dest), r["title"]):
+                if not has_title(extract_pages(dest), r["title"], r["doi"]):
                     print(f"  #{r['id']} 제목이 다른 PDF 라 버림: {u[:80]}")
                     dest.unlink()
                 else:
@@ -169,7 +171,7 @@ def match(con, pages):
     for r in rows:
         if r["doi"] and r["doi"].lower() in head:
             return r["id"]
-    hits = [r["id"] for r in rows if len(re.findall(r"\w+", r["title"] or "")) >= 3 and has_title(pages, r["title"])]
+    hits = [r["id"] for r in rows if len(re.findall(r"\w+", r["title"] or "")) >= 3 and has_title(pages, r["title"], r["doi"])]
     return hits[0] if len(hits) == 1 else None  # 둘 이상이면 모호하니 사람에게
 
 
@@ -201,7 +203,7 @@ def identify(con, pdf, pages):
     queries = ([m.group(0).rstrip(".,;)]")] if m else []) + ([t] if (t := pdf_title(pdf)) else [])
     for q in queries:
         for c in seeds.find(q)[:3]:
-            if c["title"] and has_title(pages, c["title"]):
+            if c["title"] and has_title(pages, c["title"], c["doi"]):
                 w = oa.get(f"/works/{c['openalex']}")
                 pid = w and oa.upsert_works(con, [w]).get(oa.oid(w))
                 if pid:

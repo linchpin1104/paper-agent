@@ -436,7 +436,8 @@ def quote_on_page(con, pid, page, quote):
     pages = json.loads(r["pages"])
     if not 1 <= page <= len(pages):
         return False
-    norm = lambda t: re.sub(r"\s+", " ", t.replace("\xad", "").replace("-\n", "")).strip().lower()
+    # 줄 끝 하이픈·소프트 하이픈·줄바꿈·공백 차이를 무시하려고 글자만 남겨 비교한다 (commu-\nnication = communication)
+    norm = lambda t: re.sub(r"[\s\xad\u2010-\u2015\-]+", "", t).lower()  # noqa: E731
     return norm(quote) in norm(pages[page - 1])
 
 
