@@ -47,9 +47,18 @@ def job_files(slug):
 def analysis_running(slug):
     pidf = job_files(slug)[0]
     try:
-        os.kill(int(pidf.read_text()), 0)  # 프로세스가 살아 있는지만 확인
-        return True
+        pid = int(pidf.read_text())
     except (OSError, ValueError):
+        return False
+    try:  # 이 서버가 띄운 작업이면, 끝났을 때 거둬 가야 좀비로 남아 '분석 중'에 멈추지 않는다
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:  # 이 서버가 띄운 게 아니거나 이미 거둬 감
+        pass
+    try:
+        os.kill(pid, 0)  # 살아 있는지
+        return True
+    except OSError:
         return False
 
 
