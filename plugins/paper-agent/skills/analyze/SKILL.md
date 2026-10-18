@@ -1,7 +1,7 @@
 ---
 name: analyze
-description: 읽을 목록 중 원문이 있는 논문을 researcher 에이전트로 심층 분석한다. 논증 흐름, 원문 그림·표, 20개 항목, 가설·변수를 원문 인용과 쪽수로 정리한다. 인자가 "갭"이면 쌓인 분석과 내 메모로 연구 갭·가설을 찾는다.
-argument-hint: "[논문 id 여러 개 | 갭]"
+description: 읽을 목록 중 원문이 있는 논문을 researcher 에이전트로 심층 분석한다. 논증 흐름, 원문 그림·표, 20개 항목, 가설·변수를 원문 인용과 쪽수로 정리한다. 인자가 "갭"이면 쌓인 분석과 내 메모로 연구 갭·가설을 찾고, "설계"면 어떤 이론·방법론으로 연구를 진행할지 추천한다.
+argument-hint: "[논문 id 여러 개 | 갭 | 설계]"
 allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/bin/pa" *), Bash(ls *), Bash(sqlite3 *)
 ---
 
@@ -10,7 +10,7 @@ allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/bin/pa" *), Bash(ls *), Bash(sqlite3 
 아래의 `pa` 는 `"${CLAUDE_PLUGIN_ROOT}/bin/pa"` 를 줄인 것이다.
 
 1. 프로젝트를 확인한다: `ls projects`. 여럿이면 어느 것인지 묻는다.
-2. 인자가 "갭"이면 5번으로 간다.
+2. 인자가 "갭"이면 5번, "설계"면 6번으로 간다.
 3. 대상을 정한다.
    - 인자로 id 를 주면 그 논문만 한다.
    - 없으면 `pa db.py list --project {slug} --status fulltext` 의 논문을 대상으로 한다.
@@ -23,3 +23,8 @@ allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/bin/pa" *), Bash(ls *), Bash(sqlite3 
    - 분석한 논문이 15편 미만이면 그 사실과 현재 편수를 알리고, 그래도 진행할지 묻는다.
    - `paper-agent:researcher` 에이전트에게 지침의 '3. 갭·가설 발굴'을 맡긴다. 사용자 메모를 출발점으로 삼게 한다.
    - 결과는 `projects/{slug}/gaps/` 에 쌓이고 화면의 '모아보기' 탭에 나온다.
+6. 연구 설계 추천
+   - 분석한 논문이 8편 미만이면 그 사실과 현재 편수를 알리고, 그래도 진행할지 묻는다.
+   - `paper-agent:researcher` 에이전트에게 지침의 '4. 연구 설계 추천'을 맡긴다. brief 의 제약(연구 유형, 자료 조건)을 지키게 한다.
+   - 결과는 `projects/{slug}/gaps/design.md` 에 쌓이고 화면의 '모아보기' 탭 맨 위에 나온다.
+   - 사용자에게 추천 조합 한 줄과 진행 순서 첫 단계를 알린다.

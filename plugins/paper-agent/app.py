@@ -53,9 +53,13 @@ def analysis_running(slug):
         return False
 
 
-def start_analysis(slug, ids):
+JOB_LABEL = {"갭": "갭·가설 찾기", "설계": "연구 설계 추천"}
+
+
+def start_analysis(slug, ids, cmd=None):
+    """백그라운드 분석. ids = 논문 심층 분석, cmd = '갭'·'설계' 같은 프로젝트 단위 작업."""
     pidf, idsf, logf = job_files(slug)
-    prompt = (f"/paper-agent:analyze {' '.join(map(str, ids))}\n\n"
+    prompt = (f"/paper-agent:analyze {cmd or ' '.join(map(str, ids))}\n\n"
               f"프로젝트는 {slug}. 화면에서 시작한 백그라운드 작업이라 사용자에게 묻지 말고 끝까지 진행한다.\n"
               "이 작업에서는 pa 가 PATH 에 있다. 모든 pa 명령은 전체 경로 대신 `pa 스크립트.py …` 로 실행하고, "
               "researcher 에이전트 프롬프트 첫 줄에도 이 문장을 그대로 넣는다.")
@@ -66,14 +70,19 @@ def start_analysis(slug, ids):
                                 env={**os.environ, "PAPER_AGENT_HOME": str(db.HOME),
                                      "PATH": f"{ROOT / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"})
     pidf.write_text(str(proc.pid))
-    idsf.write_text(" ".join(map(str, ids)))
+    idsf.write_text(cmd or " ".join(map(str, ids)))
 
 
 def analysis_box(slug):
     """분석 시작 버튼과 진행 상황. 진행은 DB 의 상태(분석됨)로 센다."""
     pidf, idsf, logf = job_files(slug)
     if analysis_running(slug):
-        ids = [int(x) for x in idsf.read_text().split()]
+        job = idsf.read_text().strip()
+        if job in JOB_LABEL:
+            st.info(f"{JOB_LABEL[job]} 작성 중 · 보통 10~30분 걸립니다. 끝나면 모아보기 탭에 나옵니다.")
+            st.button("진행 새로고침", width="stretch")
+            return
+        ids = [int(x) for x in job.split()]
         done = con.execute(f"SELECT count(*) FROM papers WHERE status='analyzed' AND id IN ({','.join('?' * len(ids))})", ids).fetchone()[0]
         st.info(f"심층 분석 중 · {done}/{len(ids)}편 끝남. 한 편에 10~20분 걸립니다. 창을 닫아도 계속됩니다.")
         st.button("진행 새로고침", width="stretch")
@@ -1130,14 +1139,29 @@ if sec == "모아보기":
         st.caption("읽기 탭에서 PDF 를 드래그해 남긴 메모가 논문을 가로질러 여기에 모입니다.")
 
     st.divider()
-    st.subheader("연구 아이디어 (갭·가설)")
-    files = sorted((db.HOME / "projects" / slug / "gaps").glob("*.md"))
+    st.subheader("연구 아이디어 · 연구 설계")
+    gdir = db.HOME / "projects" / slug / "gaps"
     n_an = con.execute("SELECT COUNT(*) FROM papers WHERE status='analyzed'").fetchone()[0]
-    if not files:
-        st.caption(f"분석한 논문이 15편 이상 쌓이면 researcher 에이전트가 갭과 가설 후보를 여기에 정리합니다. 지금 {n_an}편. "
-                   "내 메모도 함께 반영합니다.")
+    st.caption(f"분석한 논문 {n_an}편과 내 메모·역할을 근거로, 분석 에이전트가 백그라운드에서 씁니다(10~30분). "
+               "갭·가설은 15편, 연구 설계는 8편 이상부터 씁니다.")
+    if analysis_running(slug):
+        job = job_files(slug)[1].read_text().strip()
+        st.info(f"{JOB_LABEL.get(job, '논문 심층 분석')} 진행 중입니다. 끝나면 여기에 나옵니다.")
+        st.button("진행 새로고침", key="job_refresh")
+    else:
+        a, b = st.columns(2)
+        if a.button("연구 설계 추천 받기 (이론·방법론)", type="primary", disabled=n_an < 8, width="stretch",
+                    help="어떤 이론과 방법론(설계·자료·측정·분석)으로, 어떤 순서로 진행할지 2~3안과 추천 조합을 근거 논문과 함께 씁니다"):
+            start_analysis(slug, [], "설계")
+            st.rerun()
+        if b.button("갭·가설 찾기", disabled=n_an < 15, width="stretch",
+                    help="분석 노트와 저자들의 향후 연구 제안, 내 메모로 연구 갭과 가설 후보를 찾습니다"):
+            start_analysis(slug, [], "갭")
+            st.rerun()
+    titles = {"design": "연구 설계 추천", "candidates": "갭·가설 후보", "matrix": "증거 매트릭스"}
+    files = sorted(gdir.glob("*.md"), key=lambda f: (list(titles).index(f.stem) if f.stem in titles else 9, f.stem))
     for f in files:
-        with st.expander(f.stem, expanded=True):
+        with st.expander(titles.get(f.stem, f.stem), expanded=f.stem == "design"):
             st.markdown(f.read_text())
 
     st.divider()

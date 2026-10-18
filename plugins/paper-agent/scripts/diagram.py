@@ -104,7 +104,8 @@ def to_dot(con, pid):
         label = "조절변수\\l" + "\\l".join(g["lines"][m] for m in names) + "\\l"
         out.append(f'g{gi} [label="{label}" fillcolor="{ROLE_FILL["MOD"]}" fontsize=10];')
         for key in g["paths"]:
-            out.append(f'g{gi} -> {junction[key]} [color="{c}" style=dashed];')
+            # 매개 경로에 걸린 조절은 이을 점이 없으니 결과변수로 잇는다
+            out.append(f'g{gi} -> {junction.get(key) or ids[key[1]]} [color="{c}" style=dashed];')
     out.append("}")
     return "\n".join(out)
 
@@ -147,7 +148,7 @@ def to_mermaid(con, pid):
         out.append(f'  g{gi}["<b>조절변수</b><br/>' + "<br/>".join(q(g["lines"][m]) for m in names) + '"]')
         styles.append(f"  style g{gi} fill:{ROLE_FILL['MOD']},stroke:#9aa3b2,color:#1b2230,text-align:left")
         for key in g["paths"]:
-            link(f"g{gi}", junction[key], "", color(g["results"]), True)
+            link(f"g{gi}", junction.get(key) or ids[key[1]], "", color(g["results"]), True)
     return "\n".join(out + styles)
 
 
