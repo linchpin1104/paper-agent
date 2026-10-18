@@ -84,7 +84,7 @@ def analysis_box(slug):
             return
         ids = [int(x) for x in job.split()]
         done = con.execute(f"SELECT count(*) FROM papers WHERE status='analyzed' AND id IN ({','.join('?' * len(ids))})", ids).fetchone()[0]
-        st.info(f"심층 분석 중 · {done}/{len(ids)}편 끝남. 한 편에 10~20분 걸립니다. 창을 닫아도 계속됩니다.")
+        st.info(f"심층 분석 중 · {done}/{len(ids)}편 끝남. 5편씩 동시에 돌아가며 한 편에 5~10분쯤 걸립니다. 창을 닫아도 계속됩니다.")
         st.button("진행 새로고침", width="stretch")
         return
     # 원문 있고 아직 분석 전인 논문. 핵심(★)·역할 지정 논문을 위로
@@ -100,7 +100,7 @@ def analysis_box(slug):
         key = f"an_pick_{slug}"
         core = [r["id"] for r in rows if r["favorite"] or r["key_role"]]
         st.multiselect(f"분석할 논문 고르기 (원문 있음 {len(rows)}편)", list(by), format_func=lab, key=key,
-                       placeholder="논문을 고르세요", help="한 편에 10~20분, 한 번에 3편씩 돌아갑니다")
+                       placeholder="논문을 고르세요", help="한 편에 빠르게 5~8분·정밀하게 10분 안팎, 한 번에 5편씩 돌아갑니다")
         if core:
             st.button(f"핵심·역할 논문만 고르기 ({len(core)}편)", type="tertiary",
                       on_click=lambda: st.session_state.update({key: core}))
@@ -109,12 +109,12 @@ def analysis_box(slug):
                          help="빠르게: 핵심 12개 항목·논증 흐름·변수·가설, 한 편 5분 안팎. "
                               "정밀하게: 원문 전체·20개 항목·그림 확인·절 목차, 한 편 10분 안팎. 핵심 논문 몇 편만 정밀하게 권장")
         if st.button(f"고른 {len(picked)}편 심층 분석 시작", type="primary", width="stretch", disabled=not picked,
-                     help="논문마다 분석 에이전트가 원문을 읽고 원문 인용과 쪽수로 정리합니다. 한 번에 3편씩"):
+                     help="논문마다 분석 에이전트가 원문을 읽고 원문 인용과 쪽수로 정리합니다. 한 번에 5편씩"):
             start_analysis(slug, picked, quick=depth == "빠르게")
             st.session_state.pop(key, None)
             st.rerun()
         if st.button(f"원문 있는 {len(rows)}편 전부 분석", width="stretch",
-                     help=f"오래 걸립니다(대략 {len(rows) * 15 // 3 // 60}시간 이상). 사용량도 그만큼 씁니다"):
+                     help=f"오래 걸립니다(대략 {len(rows) * 8 // 5 // 60}시간 이상). 사용량도 그만큼 씁니다"):
             start_analysis(slug, list(by), quick=st.session_state.get("an_depth", "빠르게") == "빠르게")
             st.rerun()
     if logf.exists() and logf.stat().st_size:
