@@ -100,6 +100,7 @@ model: claude-opus-5-5
 노트가 15편 이상일 때 실행한다. 미만이면 그 사실을 보고하고 멈춘다.
 - **사용자의 형광펜 메모를 먼저 읽는다**: `pa db.py memos --project {slug}`. 색의 뜻은 중요 / 내 연구에 활용 / 의문·반박 / 인용 후보. "내 연구에 활용"과 "의문·반박" 메모는 사용자의 문제의식이므로 갭 후보의 출발점으로 삼고, 어느 메모에서 나온 후보인지 적는다.
 - `sqlite3 projects/{slug}/library.db "select p.id,p.year,p.title,n.section,n.content from notes n join papers p on p.id=n.paper_id order by p.id"` 로 전체 노트를 읽는다.
+- 초록 분석 요약도 읽는다: `pa screen.py summary --project {slug}`. 이론·방법·맥락 빈도에서 드물거나 없는 조합은 갭 후보의 근거가 된다(초록 기준이라고 밝힌다).
 - `gaps/matrix.md` — 행: 논문(id·저자·연도), 열: 이론 / 국가·맥락 / 표본 / 방법 / 핵심 결과 방향. 빈 칸 없이.
 - `gaps/candidates.md` — 갭 후보마다:
   - 갭 서술 (어떤 이론 × 맥락 × 방법 조합이 비어 있는지)
@@ -123,6 +124,7 @@ model: claude-opus-5-5
 - 역할: `pa db.py checkup --project {slug}` (이론 앵커·방법 선례·차별화 대상)
 - 사용자 메모: `pa db.py memos --project {slug}`
 - 있으면 `gaps/candidates.md` (갭 후보)
+- 초록 분석 요약: `pa screen.py summary --project {slug}` — 수백 편 초록에서 본 이론·방법·맥락 빈도와 핵심 후보. 깊게 읽은 논문 밖의 지형(무엇이 흔하고 무엇이 비었는지)을 판단하는 근거로 쓴다
 
 **쓸 것**: `gaps/design.md` 한 파일. 쉬운 말, 문서체. 형식:
 1. **연구 질문 후보** 1~2개 — brief 와 갭 후보에서. 한 줄씩.

@@ -47,7 +47,10 @@ PAPER_EXTRA = [("tier", "TEXT"), ("reason", "TEXT"), ("local_cites", "INTEGER"),
                # 내 논문에서 이 논문이 맡는 역할(KEY_ROLES)과 그 쓰임·차이 한 줄
                ("key_role", "TEXT"), ("key_role_note", "TEXT"),
                # 무료 원문 자동 받기: 마지막 시도 시각과 결과(접속 차단 / 무료본 없음 / 받기 실패). 최근 시도한 논문은 건너뛴다
-               ("ft_tried", "TEXT"), ("ft_result", "TEXT")]
+               ("ft_tried", "TEXT"), ("ft_result", "TEXT"),
+               # 초록 분석(screen.py): 1차 거르기 점수, Claude 가 초록으로 판단한 관련도(0~3)·역할 제안·이론·방법·맥락·이유
+               ("pre_score", "REAL"), ("abs_score", "INTEGER"), ("abs_role", "TEXT"), ("abs_theory", "TEXT"),
+               ("abs_method", "TEXT"), ("abs_context", "TEXT"), ("abs_note", "TEXT"), ("abs_at", "TEXT")]
 # 인용 관계 검증: 기록한 출처 목록, 검증 단계, 근거(원문 쪽·문구)
 EDGE_EXTRA = [("sources", "TEXT"), ("verified", "TEXT"), ("evidence", "TEXT")]
 NOTE_EXTRA = [("quote_ok", "INTEGER"), ("checked", "INTEGER")]

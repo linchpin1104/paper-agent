@@ -331,6 +331,67 @@ sec = s1.segmented_control("화면", ["연구 주제 설정", "찾기", "읽기"
 VERIFY_ICON = {"human": "● 사람 확인", "text": "● 원문 확인", "db2": "◐ DB 2곳", "db1": "○ DB 1곳", "miss": "⚠ 원문에 없음"}
 
 
+def screen_ui():
+    """모은 논문 전체를 초록으로 훑고(관련도·이론·방법·맥락·역할 제안), 사람이 핵심 논문을 다시 고른다."""
+    st.caption("① 연구 주제 키워드·핵심 논문과의 인용 연결·연도로 상위 논문을 추리고 ② Claude 가 초록을 40편씩 읽어 "
+               "관련도(0~3)·이론·방법·맥락·역할을 제안합니다. 상태는 바꾸지 않습니다. ③ 아래 표에서 골라 핵심·읽을 목록·역할로 정하고, "
+               "읽기 탭에서 고른 논문만 심층 분석합니다.")
+    a, b = st.columns([1, 3], vertical_alignment="bottom")
+    top = a.number_input("초록 분석할 편수", 50, 2000, 400, 50, help="1차 점수 상위부터. 이미 분석한 논문은 건너뜁니다")
+    if b.button(f"초록 분석 (상위 {top}편)", type="primary",
+                help="40편 묶음 하나에 1~3분, 3묶음씩 동시에. 400편이면 10분 안팎"):
+        st.session_state["scr_log"] = run_live("scripts/screen.py", "run", *P, "--top", str(top))
+        st.rerun()
+    if "scr_log" in st.session_state:
+        with st.expander("지난 실행 기록"):
+            st.code(st.session_state["scr_log"])
+    rows = [dict(r) for r in con.execute(
+        "SELECT id, title, year, venue, abs_score, abs_role, abs_theory, abs_method, abs_context, abs_note, status, favorite, "
+        "key_role FROM papers WHERE abs_at IS NOT NULL ORDER BY abs_score DESC, pre_score DESC")]
+    if not rows:
+        st.caption("아직 초록 분석 결과가 없습니다.")
+        return
+    cnt = {k: sum(r["abs_score"] == k for r in rows) for k in (3, 2, 1, 0)}
+    st.markdown(f"**초록 분석 {len(rows)}편** · 관련도 3(핵심 후보) {cnt[3]} · 2(꼭 읽을 것) {cnt[2]} · 1(배경) {cnt[1]} · 0(무관) {cnt[0]}")
+    c1, c2, c3 = st.columns([1, 2, 2])
+    lo = c1.selectbox("관련도", [3, 2, 1, 0], index=1, format_func=lambda v: f"{v} 이상", key="scr_lo")
+    roles = c2.multiselect("제안 역할", list(db.KEY_ROLES) + ["무관"], key="scr_roles", placeholder="전체")
+    q = c3.text_input("검색", key="scr_q", placeholder="제목·이론·방법·맥락").lower()
+    shown = [r for r in rows if r["abs_score"] >= lo and (not roles or r["abs_role"] in roles)
+             and (not q or q in " ".join(str(r[k] or "") for k in ("title", "abs_theory", "abs_method", "abs_context")).lower())]
+    on, ekey = check_all(f"scr_{slug}")
+    for r in shown:
+        r["선택"] = bool(on)
+        r["지금"] = ("★ " if r["favorite"] else "") + STATUS_KO.get(r["status"], r["status"]) + (f" · {r['key_role']}" if r["key_role"] else "")
+    ed = st.data_editor(shown, key=ekey, hide_index=True, width="stretch", height=520,
+                        column_order=["선택", "abs_score", "abs_role", "title", "year", "abs_theory", "abs_method",
+                                      "abs_context", "abs_note", "지금"],
+                        disabled=["abs_score", "abs_role", "title", "year", "abs_theory", "abs_method", "abs_context", "abs_note", "지금"],
+                        column_config={"선택": st.column_config.CheckboxColumn("선택", width="small"),
+                                       "abs_score": st.column_config.NumberColumn("관련도", width="small"),
+                                       "abs_role": st.column_config.TextColumn("제안 역할", width="small"),
+                                       "title": st.column_config.TextColumn("제목", width="large"), "year": "연도",
+                                       "abs_theory": "이론", "abs_method": "방법", "abs_context": "맥락",
+                                       "abs_note": st.column_config.TextColumn("이유", width="large"), "지금": "지금 상태"})
+    ids = [r["id"] for r in ed if r["선택"]]
+    b1, b2, b3 = st.columns(3)
+    if b1.button(f"체크한 {len(ids)}편 핵심 논문(★)으로", disabled=not ids, width="stretch",
+                 help="핵심 논문은 '핵심 논문에서 찾기'의 인용 확장 기준이 됩니다"):
+        con.executemany("UPDATE papers SET favorite=1 WHERE id=?", [(i,) for i in ids])
+        con.commit()
+        st.rerun()
+    if b2.button(f"체크한 {len(ids)}편 읽을 목록에 넣기", disabled=not ids, width="stretch"):
+        con.executemany("UPDATE papers SET status='shortlist' WHERE id=? AND status='candidate'", [(i,) for i in ids])
+        con.commit()
+        st.rerun()
+    if b3.button(f"체크한 {len(ids)}편 제안 역할 적용", disabled=not ids, width="stretch",
+                 help="이미 역할을 정한 논문과 '무관'으로 제안된 논문은 그대로 둡니다"):
+        con.executemany("UPDATE papers SET key_role=abs_role WHERE id=? AND key_role IS NULL AND abs_role != '무관'",
+                        [(i,) for i in ids])
+        con.commit()
+        st.rerun()
+
+
 def seed_ui():
     st.caption("① 핵심 논문을 먼저 정하고 ② 그 논문들의 인용 관계를 따라 연관 논문으로 넓힙니다. "
                "관계마다 그 인용이 실제로 있는지 검증 단계를 붙이고, 원문을 본 사람이 최종 확인합니다.")
@@ -499,9 +560,11 @@ def seed_ui():
 
 
 if sec == "찾기":
-    t_seed, t_kw, t_all = st.tabs(["핵심 논문에서 찾기", "키워드로 넓게 찾기 (참고)", "전체 후보"])
+    t_seed, t_scr, t_kw, t_all = st.tabs(["핵심 논문에서 찾기", "초록으로 핵심 추리기", "키워드로 넓게 찾기 (참고)", "전체 후보"])
     with t_seed:
         seed_ui()
+    with t_scr:
+        screen_ui()
     with t_kw:
         st.caption("핵심 논문이 아직 없을 때 쓰는 길입니다. 주제 키워드로 넓게 모은 뒤 리뷰·고전·최전선·직결로 추립니다.")
         b1, b3, b4 = st.columns(3)
