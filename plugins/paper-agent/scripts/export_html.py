@@ -2,7 +2,7 @@
   python scripts/export_html.py --project SLUG   → projects/SLUG/export/report.html
 원문 전문은 넣지 않는다 (저작권). 노트의 인용문과 쪽수, 원문 링크만.
 """
-import argparse, collections, datetime, html, pathlib, re, sys
+import argparse, collections, datetime, html, pathlib, re, sys, unicodedata
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from db import connect, project_dir, read_brief, SECTIONS
 import base64
@@ -53,7 +53,8 @@ STATUS_KO = {"candidate": "후보", "shortlist": "읽을 목록", "fulltext": "�
 # 목록에 넣지 않을 것: 학술지 공지·정정·서평 (논문이 아님)
 NOT_PAPER = re.compile(r"^(issue information|correction|corrigendum|erratum|retraction|editorial board|book review)|\bbook review\b"
                        r"|^review of\b|, (ed|eds)\.|\(eds?\.\)", re.I)
-U = lambda s: html.unescape(s or "")  # noqa: E731  API 가 이미 &amp; 로 준 값을 한 번 풀고 다시 이스케이프한다
+U = lambda s: " ".join(html.unescape(s or "").split())  # noqa: E731  &amp; 를 풀고 제목 속 줄바꿈·겹친 공백을 한 칸으로
+Q = lambda s: unicodedata.normalize("NFKC", s or "")  # noqa: E731  인용문의 합자(ﬁ·ﬂ)를 일반 글자로
 
 CSS = """
 :root{
@@ -338,12 +339,9 @@ def paper_pane(con, slug, p):
         if s == "한 줄 요약" or not by.get(s):
             continue
         txt = "".join(f'<p class="{"interp" if s.startswith("[") else ""}" style="margin:.2em 0">{e(n["content"])}</p>'
-                      + (f'<blockquote>{e(n["quote"])} <span class="pg">p.{n["page"]}</span></blockquote>' if n["quote"] else "")
+                      + (f'<blockquote>{e(Q(n["quote"]))} <span class="pg">p.{n["page"]}</span></blockquote>' if n["quote"] else "")
                       for n in by[s])
         secs.append(f'<div class="sec"><span class="lab">{e(s)}</span><div>{txt}</div></div>')
-    empty = [s for s in SECTIONS if not by.get(s)]
-    if empty:
-        secs.append(f'<p class="meta">아직 쓰지 않은 항목 {len(empty)}개: {e(", ".join(empty))}</p>')
     body.append(f'<details class="box" open><summary>분석</summary><div class="in">{"".join(secs)}</div></details>')
 
     hy = con.execute("SELECT * FROM hypotheses WHERE paper_id=? ORDER BY id", (pid,)).fetchall()
