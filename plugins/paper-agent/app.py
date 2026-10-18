@@ -44,6 +44,14 @@ def job_files(slug):
     return d / "analyze.pid", d / "analyze.ids", d / "analyze.log"
 
 
+def job_minutes(slug):
+    """지금 작업이 시작된 지 몇 분. 작업 파일(pid)을 쓴 시각 기준."""
+    try:
+        return int((time.time() - job_files(slug)[0].stat().st_mtime) // 60)
+    except OSError:
+        return 0
+
+
 def analysis_running(slug):
     pidf = job_files(slug)[0]
     try:
@@ -88,12 +96,12 @@ def analysis_box(slug):
     if analysis_running(slug):
         job = idsf.read_text().strip()
         if job in JOB_LABEL:
-            st.info(f"{JOB_LABEL[job]} 작성 중 · 보통 10~30분 걸립니다. 끝나면 모아보기 탭에 나옵니다.")
+            st.info(f"{JOB_LABEL[job]} 작성 중 · 시작 후 {job_minutes(slug)}분. 보통 10~30분 걸리고, 끝날 때 한꺼번에 나옵니다(모아보기 탭).")
             st.button("진행 새로고침", width="stretch")
             return
         ids = [int(x) for x in job.split()]
         done = con.execute(f"SELECT count(*) FROM papers WHERE status='analyzed' AND id IN ({','.join('?' * len(ids))})", ids).fetchone()[0]
-        st.info(f"심층 분석 중 · {done}/{len(ids)}편 끝남. 5편씩 동시에 돌아가며 한 편에 5~10분쯤 걸립니다. 창을 닫아도 계속됩니다.")
+        st.info(f"심층 분석 중 · {done}/{len(ids)}편 끝남 · 시작 후 {job_minutes(slug)}분. 5편씩 동시에, 한 편에 5~10분쯤. 창을 닫아도 계속됩니다.")
         st.button("진행 새로고침", width="stretch")
         return
     # 원문 있고 아직 분석 전인 논문. 핵심(★)·역할 지정 논문을 위로
@@ -791,10 +799,12 @@ def paper_list():
             items = [r for r in shown if (r["status"] if r["status"] in groups else None) == g]
             if not items:
                 continue
-            st.caption(f"{groups.get(g, '원문 없음')} {len(items)}")
-            for r in items:
-                st.button(label(r), key=f"rd_{r['id']}", on_click=pick, args=(r["id"],),
-                          type="secondary" if r["id"] == st.session_state["rd"] else "tertiary")
+            # 분석됨만 펼쳐 두고, 지금 보는 논문이 속한 묶음과 검색 중일 때는 펼친다
+            cur = any(r["id"] == st.session_state["rd"] for r in items)
+            with st.expander(f"{groups.get(g, '원문 없음')} {len(items)}", expanded=g == "analyzed" or cur or bool(q)):
+                for r in items:
+                    st.button(label(r), key=f"rd_{r['id']}", on_click=pick, args=(r["id"],),
+                              type="secondary" if r["id"] == st.session_state["rd"] else "tertiary")
         if any(r["favorite"] for r in shown):
             st.caption("★ 핵심 논문")
         return st.session_state["rd"]
@@ -1257,7 +1267,8 @@ if sec == "모아보기":
                "갭·가설은 15편, 연구 설계는 8편 이상부터 씁니다.")
     if analysis_running(slug):
         job = job_files(slug)[1].read_text().strip()
-        st.info(f"{JOB_LABEL.get(job, '논문 심층 분석')} 진행 중입니다. 끝나면 여기에 나옵니다.")
+        st.info(f"{JOB_LABEL.get(job, '논문 심층 분석')} 진행 중 · 시작 후 {job_minutes(slug)}분. "
+                "추천은 분석 노트 전체를 읽고 한 번에 쓰므로 끝날 때 한꺼번에 여기에 나옵니다(보통 10~30분).")
         st.button("진행 새로고침", key="job_refresh")
     else:
         a, b = st.columns(2)
