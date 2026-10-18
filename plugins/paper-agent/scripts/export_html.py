@@ -76,14 +76,16 @@ h1,h2,h3{font-family:var(--display);line-height:1.3;margin:0;text-wrap:balance}
 h1{font-size:1.5rem} h2{font-size:1.25rem} h3{font-size:1.05rem}
 .meta{color:var(--muted);font-size:.86rem}
 .pg{font:.74rem var(--mono);color:var(--muted)}
-.top{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--line);padding:12px 16px;display:grid;gap:10px}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--line);
+  padding-block:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:10px}
 .top .row{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;justify-content:space-between}
 .top .stats{font:.8rem var(--mono);color:var(--muted)}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-wrap:wrap}
 .seg button{border:0;background:transparent;color:var(--fg);font:inherit;font-size:.92rem;padding:6px 14px;cursor:pointer}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button[aria-selected=true]{background:var(--accent-soft);color:var(--accent);font-weight:600}
-.view{display:none;padding:20px 16px 64px;max-width:1280px;margin:0 auto}
+.view{display:none;padding-block:20px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));max-width:1280px;margin:0 auto}
 .view.on{display:block}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px;display:grid;gap:10px;min-width:0}
 .stack{display:grid;gap:16px}
@@ -213,7 +215,8 @@ def build(slug):
     anc = con.execute("SELECT * FROM papers WHERE anchor=1").fetchone()
     anchor_line = (f'<div class="meta"><b>기준 논문</b> · <a href="#" data-go="{anc["id"]}">{e(U(anc["title"]))}</a> · '
                    f'{e((U(anc["authors"]).split(";")[0]))} {anc["year"] or ""} · <em>{e(U(anc["venue"]))}</em></div>') if anc else ""
-    return f"""<title>{e(name)}</title>
+    return f"""<title>{e(slug)} 문헌 보고서</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;600&family=Noto+Serif+KR:wght@600&display=swap">
 <style>{CSS}</style>
 <div class="top">
