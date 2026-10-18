@@ -87,11 +87,33 @@ def analysis_box(slug):
         st.info(f"심층 분석 중 · {done}/{len(ids)}편 끝남. 한 편에 10~20분 걸립니다. 창을 닫아도 계속됩니다.")
         st.button("진행 새로고침", width="stretch")
         return
-    todo = [r["id"] for r in con.execute("SELECT id FROM papers WHERE status='fulltext'")]
-    if todo and st.button(f"원문 있는 {len(todo)}편 심층 분석 시작", type="primary", width="stretch",
-                          help="논문마다 분석 에이전트가 원문 전체를 읽고 논증 흐름·연구 모형·20개 항목·가설·변수를 원문 인용과 쪽수로 정리합니다. 한 번에 3편씩"):
-        start_analysis(slug, todo)
-        st.rerun()
+    # 원문 있고 아직 분석 전인 논문. 핵심(★)·역할 지정 논문을 위로
+    rows = con.execute("SELECT id, title, year, authors, favorite, key_role FROM papers WHERE status='fulltext' "
+                       "ORDER BY favorite DESC, key_role IS NULL, year DESC").fetchall()
+    if rows:
+        def lab(i):
+            r = by[i]
+            first = ((r["authors"] or "").split(";")[0].split() or [""])[-1]
+            return (f"{'★ ' if r['favorite'] else ''}{r['key_role'] + ' · ' if r['key_role'] else ''}"
+                    f"{first} {r['year'] or ''} — {(r['title'] or '')[:40]}")
+        by = {r["id"]: r for r in rows}
+        key = f"an_pick_{slug}"
+        core = [r["id"] for r in rows if r["favorite"] or r["key_role"]]
+        st.multiselect(f"분석할 논문 고르기 (원문 있음 {len(rows)}편)", list(by), format_func=lab, key=key,
+                       placeholder="논문을 고르세요", help="한 편에 10~20분, 한 번에 3편씩 돌아갑니다")
+        if core:
+            st.button(f"핵심·역할 논문만 고르기 ({len(core)}편)", type="tertiary",
+                      on_click=lambda: st.session_state.update({key: core}))
+        picked = st.session_state.get(key) or []
+        if st.button(f"고른 {len(picked)}편 심층 분석 시작", type="primary", width="stretch", disabled=not picked,
+                     help="논문마다 분석 에이전트가 원문 전체를 읽고 논증 흐름·연구 모형·20개 항목·가설·변수를 원문 인용과 쪽수로 정리합니다"):
+            start_analysis(slug, picked)
+            st.session_state.pop(key, None)
+            st.rerun()
+        if st.button(f"원문 있는 {len(rows)}편 전부 분석", width="stretch",
+                     help=f"오래 걸립니다(대략 {len(rows) * 15 // 3 // 60}시간 이상). 사용량도 그만큼 씁니다"):
+            start_analysis(slug, list(by))
+            st.rerun()
     if logf.exists() and logf.stat().st_size:
         with st.expander("지난 분석 기록"):
             st.code(logf.read_text()[-3000:])
