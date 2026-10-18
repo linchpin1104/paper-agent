@@ -137,7 +137,7 @@ model: claude-opus-5-5
 - 전체 노트: `sqlite3 projects/{slug}/library.db "select p.id,p.year,p.title,n.section,n.content from notes n join papers p on p.id=n.paper_id where n.section in ('이론 기반','연구 모형','표본·맥락','측정 또는 자료','분석 기법','[평가] 방법론','한계','향후 연구 제안','[해석] 비운 자리','[해석] 내 연구와의 연결') order by p.id"`
 - 측정 도구: `sqlite3 projects/{slug}/library.db "select paper_id,role,name,measure,source,items,alpha from variables order by name"`
 - 가설: `sqlite3 projects/{slug}/library.db "select paper_id,code,statement,result,stats from hypotheses"`
-- 역할: `pa db.py checkup --project {slug}` (이론 앵커·방법 선례·차별화 대상)
+- 기준 논문과 역할: `pa db.py checkup --project {slug}` 맨 위의 '기준 논문'(이 연구의 출발점)과 이론 앵커·방법 선례·차별화 대상. 기준 논문이 분석돼 있으면 그 노트·변수·가설을 먼저 읽는다
 - 사용자 메모: `pa db.py memos --project {slug}`
 - 있으면 `gaps/candidates.md` (갭 후보)
 - 초록 분석 요약: `pa screen.py summary --project {slug}` — 수백 편 초록에서 본 이론·방법·맥락 빈도와 핵심 후보. 깊게 읽은 논문 밖의 지형(무엇이 흔하고 무엇이 비었는지)을 판단하는 근거로 쓴다
@@ -154,6 +154,7 @@ model: claude-opus-5-5
    | 선례 | 같은 방법을 쓴 분석 논문 id (방법 선례) |
    | 심사 위험 | 이 설계에서 심사자가 짚을 약점과 대응 |
 4. **추천 조합** 하나 — 이론 1안 + 방법론 1안. 고른 이유, 차별화 대상 논문과 무엇이 다른지.
+   기준 논문이 있으면 그 논문을 출발점으로 쓴다: 기준 논문의 설계·자료·측정·분석 가운데 **그대로 쓰는 것 / 바꾸는 것 / 더하는 것**을 표로 나누고, 바꾸고 더하는 것이 이 연구의 기여라는 점을 한 문장으로 적는다.
 5. **진행 순서** — 무엇부터 할지 단계별로(예: 측정 도구 확정 → 자료 수집 시범 → 본 수집 → 분석). 단계마다 필요한 자료·도구와 이 프로젝트에서 아직 비어 있는 것(받을 원문, 찾을 방법 선례 등).
 6. **근거 표** — 위 주장마다 근거 논문 id 와 노트 항목.
 

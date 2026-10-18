@@ -150,10 +150,10 @@ def build(slug):
 
     # ── 핵심 논문 ──
     core = [r for r in con.execute("SELECT * FROM papers WHERE favorite=1 "
-                                   "ORDER BY key_role IS NULL, COALESCE(abs_score, -1) DESC, year DESC") if is_paper(r)]
+                                   "ORDER BY anchor IS NULL, key_role IS NULL, COALESCE(abs_score, -1) DESC, year DESC") if is_paper(r)]
     core_rows = "".join(
         f"<tr><td>{r['year'] or ''}</td><td>{e(U(r['title']))}</td><td>{e((U(r['authors'])).split(';')[0])}</td>"
-        f"<td>{e(U(r['venue']))}</td><td>{e(r['key_role'] or '')}</td><td>{STATUS_KO.get(r['status'], r['status'])}</td></tr>" for r in core)
+        f"<td>{e(U(r['venue']))}</td><td>{'<span class=\'chip on\'>기준</span> ' if r['anchor'] else ''}{e(r['key_role'] or '')}</td><td>{STATUS_KO.get(r['status'], r['status'])}</td></tr>" for r in core)
     scr = [r for r in con.execute("SELECT * FROM papers WHERE abs_at IS NOT NULL AND abs_score >= 2 "
                                   "ORDER BY abs_score DESC, year DESC") if is_paper(r)]
     scr_rows = "".join(
@@ -175,7 +175,7 @@ def build(slug):
 
     # ── 읽기: 왼쪽 목록 + 오른쪽 논문 ──
     rows = [r for r in con.execute("SELECT * FROM papers WHERE status IN ('shortlist','fulltext','analyzed') OR favorite=1 "
-                                   "ORDER BY favorite DESC, year DESC") if is_paper(r)]
+                                   "ORDER BY anchor IS NULL, favorite DESC, year DESC") if is_paper(r)]
     groups = {"analyzed": "분석됨", "fulltext": "원문 있음"}
     side, panes = [], []
     for g in ["analyzed", "fulltext", None]:
@@ -187,7 +187,7 @@ def build(slug):
             first = (U(r["authors"]).split(";")[0].split() or [""])[-1]
             t = U(r["title"])
             side.append(f'<button data-p="{r["id"]}" data-q="{e((t + " " + U(r["authors"])).lower())}">'
-                        f'{"★ " if r["favorite"] else ""}{e(first)} {r["year"] or ""} — {e(t[:60] + ("…" if len(t) > 60 else ""))}</button>')
+                        f'{"[기준] " if r["anchor"] else "★ " if r["favorite"] else ""}{e(first)} {r["year"] or ""} — {e(t[:60] + ("…" if len(t) > 60 else ""))}</button>')
             panes.append(paper_pane(con, slug, r))
 
     # ── 모아보기 ──
@@ -210,11 +210,15 @@ def build(slug):
                     + (f'<div class="card"><h2>내 메모 {len(memos)}개</h2>{memo_list(memos, True)}</div>' if memos else "")
                     + "</div>")
 
+    anc = con.execute("SELECT * FROM papers WHERE anchor=1").fetchone()
+    anchor_line = (f'<div class="meta"><b>기준 논문</b> · <a href="#" data-go="{anc["id"]}">{e(U(anc["title"]))}</a> · '
+                   f'{e((U(anc["authors"]).split(";")[0]))} {anc["year"] or ""} · <em>{e(U(anc["venue"]))}</em></div>') if anc else ""
     return f"""<title>{e(name)}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;600&family=Noto+Serif+KR:wght@600&display=swap">
 <style>{CSS}</style>
 <div class="top">
   <div class="row"><h1>{e(name)}</h1><span class="stats">{e(slug)} · {datetime.date.today().isoformat()} · {e(stats)}</span></div>
+  {anchor_line}
   <div class="seg" role="tablist" aria-label="화면" id="nav">
     <button aria-selected="false" data-v="brief">연구 주제</button><button aria-selected="false" data-v="core">핵심 논문</button>
     <button aria-selected="true" data-v="read">읽기</button><button aria-selected="false" data-v="collect">모아보기</button>
@@ -246,6 +250,7 @@ $$('.tabs').forEach(t=>$$('button',t).forEach(b=>b.onclick=()=>{{ $$('button',t)
   const box=t.parentElement; $$(':scope>.tp',box).forEach(p=>p.classList.toggle('on',p.dataset.t===b.dataset.t)); drawModels(box); }}));
 const segs=$$('#v-core .seg button'); segs.forEach(b=>b.onclick=()=>{{ segs.forEach(x=>x.setAttribute('aria-selected',x===b));
   $$('#scr tbody tr').forEach(r=>r.hidden=+r.dataset.s<+b.dataset.min) }}); if(segs[0]) segs[0].click();
+$$('[data-go]').forEach(a=>a.onclick=ev=>{{ev.preventDefault(); view('read'); pick(a.dataset.go)}});
 const first=$('.side button'); if(first) pick(first.dataset.p);
 </script>
 """
@@ -267,7 +272,8 @@ def paper_pane(con, slug, p):
     head = (f'<header><div class="pg">#{pid} · {p["year"] or ""} · 인용 {p["cited_by"] or 0}</div><h2>{e(U(p["title"]))}</h2>'
             f'<div class="meta">{e(U(p["authors"]))} · <em>{e(U(p["venue"]))}</em>'
             + (f' · <a href="{e(link)}" target="_blank" rel="noopener">원문 페이지</a>' if link else "") + "</div></header>")
-    chips = f'<span class="chip on">{e(p["key_role"])}</span>' if p["key_role"] else ""
+    chips = '<span class="chip on">기준 논문</span> ' if p["anchor"] else ""
+    chips += f'<span class="chip on">{e(p["key_role"])}</span>' if p["key_role"] else ""
     chips += f' <span class="chip">{e(p["review"])}</span>' if p["review"] else ""
     chips += f' <span class="meta">{e(p["key_role_note"] or "")}</span>' if p["key_role_note"] else ""
     by = collections.defaultdict(list)

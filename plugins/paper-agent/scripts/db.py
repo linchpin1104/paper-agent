@@ -15,7 +15,8 @@ CLI:
   python scripts/db.py unpick  --project SLUG --paper ID
   python scripts/db.py reading --project SLUG              # 읽을 목록 제안 보기
   python scripts/db.py role    --project SLUG --paper ID --role 차별화 대상 --content "쓰임·차이 1문장"   # 내 논문에서의 역할. --role 없음 = 지우기
-  python scripts/db.py checkup --project SLUG              # 문헌 목록 점검: 연도·국내·역할 빈칸
+  python scripts/db.py checkup --project SLUG              # 문헌 목록 점검: 기준 논문·연도·국내·역할 빈칸
+  python scripts/db.py anchor  --project SLUG --paper ID   # 기준 논문 지정 (프로젝트에 하나). --paper 0 = 해제
   python scripts/db.py clear --project SLUG --paper ID                 # 그 논문의 노트·변수·가설 삭제 (재분석 전)
   python scripts/db.py load  --project SLUG --paper ID --file a.json   # 분석 결과 한 번에 저장 (note·var·hyp·flow·outline 을 하나씩 부르는 대신)
 """
@@ -51,7 +52,9 @@ PAPER_EXTRA = [("tier", "TEXT"), ("reason", "TEXT"), ("local_cites", "INTEGER"),
                ("ft_tried", "TEXT"), ("ft_result", "TEXT"),
                # 초록 분석(screen.py): 1차 거르기 점수, Claude 가 초록으로 판단한 관련도(0~3)·역할 제안·이론·방법·맥락·이유
                ("pre_score", "REAL"), ("abs_score", "INTEGER"), ("abs_role", "TEXT"), ("abs_theory", "TEXT"),
-               ("abs_method", "TEXT"), ("abs_context", "TEXT"), ("abs_note", "TEXT"), ("abs_at", "TEXT")]
+               ("abs_method", "TEXT"), ("abs_context", "TEXT"), ("abs_note", "TEXT"), ("abs_at", "TEXT"),
+               # 기준 논문: 이 연구가 출발점으로 삼는 논문. 프로젝트에 하나 (set_anchor 가 나머지를 푼다)
+               ("anchor", "INTEGER")]
 # 인용 관계 검증: 기록한 출처 목록, 검증 단계, 근거(원문 쪽·문구)
 EDGE_EXTRA = [("sources", "TEXT"), ("verified", "TEXT"), ("evidence", "TEXT")]
 NOTE_EXTRA = [("quote_ok", "INTEGER"), ("checked", "INTEGER")]
@@ -232,6 +235,18 @@ def log_hits(con, pids, query):
     con.executemany("INSERT OR IGNORE INTO hits(paper_id, query) VALUES(?,?)", [(p, query) for p in pids if p])
 
 
+def set_anchor(con, pid):
+    """기준 논문을 pid 하나로. pid=0 이면 해제. 기준 논문은 핵심 논문(★)이기도 하다."""
+    con.execute("UPDATE papers SET anchor=NULL WHERE anchor=1")
+    if pid:
+        con.execute("UPDATE papers SET anchor=1, favorite=1 WHERE id=?", (pid,))
+    con.commit()
+
+
+def anchor_paper(con):
+    return con.execute("SELECT * FROM papers WHERE anchor=1").fetchone()
+
+
 def checkup(con):
     """읽을 목록(★·읽을 목록·원문·분석·제안·역할 지정) 점검. 경고 문장 목록과 집계를 돌려준다."""
     rows = con.execute("SELECT id, title, year, venue, key_role, key_role_note FROM papers WHERE favorite=1 "
@@ -256,7 +271,10 @@ def checkup(con):
     for r in roles["차별화 대상"]:
         if not r["key_role_note"]:
             warn.append(f"차별화 대상 #{r['id']} 에 '이 논문과 무엇이 다른가' 한 줄이 없습니다.")
-    return {"n": len(rows), "years": bins, "recent": recent, "ko": ko, "roles": roles, "warn": warn}
+    anc = anchor_paper(con)
+    if not anc:
+        warn.insert(0, "기준 논문이 없습니다. 이 연구가 출발점으로 삼는 논문을 읽기 탭에서 정하면 연구 설계 추천이 그 논문을 기준으로 씁니다.")
+    return {"n": len(rows), "years": bins, "recent": recent, "ko": ko, "roles": roles, "warn": warn, "anchor": anc}
 
 
 def log_search(con, source, query, n):
@@ -265,7 +283,7 @@ def log_search(con, source, query, n):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["init", "list", "text", "note", "notes", "var", "hyp", "outline", "flow", "memos", "pick", "unpick", "reading", "clear", "role", "checkup", "load"])
+    ap.add_argument("cmd", choices=["init", "list", "text", "note", "notes", "var", "hyp", "outline", "flow", "memos", "pick", "unpick", "reading", "clear", "role", "checkup", "load", "anchor"])
     ap.add_argument("--project", required=True)
     ap.add_argument("--paper", type=int)
     ap.add_argument("--status")
@@ -352,6 +370,10 @@ def main():
             print(f"\n[{t}] {len(rows)}편")
             for r in rows:
                 print(f"  #{r['id']} {r['year']} {r['title'][:80]} — {r['venue'] or ''} (후보 인용 {r['local_cites'] or 0})\n     {r['reason']}")
+    elif a.cmd == "anchor":
+        set_anchor(con, a.paper or 0)
+        r = anchor_paper(con)
+        print(f"기준 논문: #{r['id']} {r['year']} {r['title']}" if r else "기준 논문 해제")
     elif a.cmd == "load":
         load(con, a.paper, a.file)
     elif a.cmd == "role":
@@ -362,6 +384,9 @@ def main():
         print("ok")
     elif a.cmd == "checkup":
         c = checkup(con)
+        if c["anchor"]:
+            r = c["anchor"]
+            print(f"기준 논문: #{r['id']} {r['year']} {r['title']} — {r['venue'] or ''}\n   {r['key_role_note'] or ''}")
         print(f"읽을 목록 {c['n']}편 · 최근 5년 {c['recent']} · 국내 {c['ko']}")
         print("연도: " + " · ".join(f"{k} {v}" for k, v in c["years"].items()))
         for k, rs in c["roles"].items():

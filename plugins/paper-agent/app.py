@@ -88,13 +88,13 @@ def analysis_box(slug):
         st.button("진행 새로고침", width="stretch")
         return
     # 원문 있고 아직 분석 전인 논문. 핵심(★)·역할 지정 논문을 위로
-    rows = con.execute("SELECT id, title, year, authors, favorite, key_role FROM papers WHERE status='fulltext' "
-                       "ORDER BY favorite DESC, key_role IS NULL, year DESC").fetchall()
+    rows = con.execute("SELECT id, title, year, authors, favorite, key_role, anchor FROM papers WHERE status='fulltext' "
+                       "ORDER BY anchor IS NULL, favorite DESC, key_role IS NULL, year DESC").fetchall()
     if rows:
         def lab(i):
             r = by[i]
             first = ((r["authors"] or "").split(";")[0].split() or [""])[-1]
-            return (f"{'★ ' if r['favorite'] else ''}{r['key_role'] + ' · ' if r['key_role'] else ''}"
+            return (f"{'[기준] ' if r['anchor'] else '★ ' if r['favorite'] else ''}{r['key_role'] + ' · ' if r['key_role'] else ''}"
                     f"{first} {r['year'] or ''} — {(r['title'] or '')[:40]}")
         by = {r["id"]: r for r in rows}
         key = f"an_pick_{slug}"
@@ -329,6 +329,10 @@ s2.markdown("<div style='text-align:right;font-size:.8rem;opacity:.6'>"
 first = first_tab(slug)
 sec = s1.segmented_control("화면", ["연구 주제 설정", "찾기", "읽기", "모아보기"], default=first,
                            key="sec", label_visibility="collapsed") or first
+anc = db.anchor_paper(con)
+if anc:
+    st.caption(f"**기준 논문** · {((anc['authors'] or '').split(';')[0].split() or [''])[-1]} {anc['year'] or ''} — "
+               f"{anc['title']} · *{anc['venue'] or ''}*")
 
 # ── 찾기 ─────────────────────────────────────────────────
 VERIFY_ICON = {"human": "● 사람 확인", "text": "● 원문 확인", "db2": "◐ DB 2곳", "db1": "○ DB 1곳", "miss": "⚠ 원문에 없음"}
@@ -399,13 +403,13 @@ def seed_ui():
     st.caption("① 핵심 논문을 먼저 정하고 ② 그 논문들의 인용 관계를 따라 연관 논문으로 넓힙니다. "
                "관계마다 그 인용이 실제로 있는지 검증 단계를 붙이고, 원문을 본 사람이 최종 확인합니다.")
     # 역할을 정한 논문(기준·차별화 대상 등) → 초록 관련도 → 최신순. 핵심 논문이 많아도 기준 논문이 묻히지 않게
-    seeds = con.execute("SELECT id, title, year, venue, authors, doi, review, key_role, abs_score, status FROM papers WHERE favorite=1 "
-                        "ORDER BY key_role IS NULL, COALESCE(abs_score, -1) DESC, year DESC").fetchall()
+    seeds = con.execute("SELECT id, title, year, venue, authors, doi, review, key_role, abs_score, status, anchor FROM papers WHERE favorite=1 "
+                        "ORDER BY anchor IS NULL, key_role IS NULL, COALESCE(abs_score, -1) DESC, year DESC").fetchall()
     st.markdown(f"**① 핵심 논문 {len(seeds)}편**")
     if seeds:
         on, ekey = check_all(f"seeds_{slug}")
         rows = [dict(r, 빼기=bool(on), 저자=(r["authors"] or "").split(";")[0], 검토=r["review"] or "미검토",
-                     역할=r["key_role"] or "", 분석="분석됨" if r["status"] == "analyzed" else STATUS_KO.get(r["status"], r["status"]),
+                     역할=("기준 · " if r["anchor"] else "") + (r["key_role"] or ""), 분석="분석됨" if r["status"] == "analyzed" else STATUS_KO.get(r["status"], r["status"]),
                      DOI=f"https://doi.org/{r['doi']}" if r["doi"] else None) for r in seeds]
         se = st.data_editor(rows, key=ekey, hide_index=True, width="stretch",
                             column_order=["빼기", "역할", "title", "year", "저자", "venue", "분석", "검토", "DOI"],
@@ -687,13 +691,13 @@ if sec == "찾기":
 # ── 읽기 ─────────────────────────────────────────────────
 def paper_list():
     """읽기 화면 왼쪽 고정 목록. 분석됨 / 원문 있음 / 원문 없음으로 묶고, 묶음 안에서 핵심 논문(★)이 위."""
-    rows = con.execute("SELECT id, title, year, authors, status, favorite FROM papers "
+    rows = con.execute("SELECT id, title, year, authors, status, favorite, anchor FROM papers "
                        "WHERE status IN ('shortlist','fulltext','analyzed') OR favorite=1").fetchall()
     if not rows:
         return None
     groups = {"analyzed": "분석됨", "fulltext": "원문 있음"}
     rows = sorted(rows, key=lambda r: (list(groups).index(r["status"]) if r["status"] in groups else 2,
-                                       -r["favorite"], -(r["year"] or 0)))
+                                       -(r["anchor"] or 0), -r["favorite"], -(r["year"] or 0)))
     with st.sidebar:
         # 목록 항목은 버튼이지만 글줄처럼 보이게: 왼쪽 정렬, 테두리 없음, 선택한 줄만 배경
         st.markdown("<style>section[data-testid=stSidebar] .stButton button{justify-content:flex-start;"
@@ -770,7 +774,7 @@ def paper_list():
             parts = [w for w in (r["authors"] or "").split(";")[0].replace(".", " ").split() if len(w) > 1]
             first = parts[-1:] or [""]  # 끝의 이니셜(R, J.)은 건너뛴다
             t = r["title"] if len(r["title"]) <= 48 else r["title"][:46] + "…"
-            return f"{'★ ' if r['favorite'] else ''}{first[0]} {r['year'] or ''} — {t}"
+            return f"{'[기준] ' if r['anchor'] else '★ ' if r['favorite'] else ''}{first[0]} {r['year'] or ''} — {t}"
         def pick(i):
             st.session_state["rd"] = i
         for g in ["analyzed", "fulltext", None]:
@@ -978,7 +982,13 @@ def set_note_checked(nid):
 
 
 def role_box(pid, p):
-    """내 논문에서 이 논문이 맡는 역할. 묶음(리뷰·고전…)과 달리 쓰임을 정한다."""
+    """내 논문에서 이 논문이 맡는 역할. 묶음(리뷰·고전…)과 달리 쓰임을 정한다. 기준 논문 지정도 여기서."""
+    if p["anchor"]:
+        st.button("기준 논문 해제", key=f"anc{pid}", type="tertiary", on_click=db.set_anchor, args=(con, 0),
+                  help="이 연구가 출발점으로 삼는 논문입니다. 연구 설계 추천이 이 논문을 기준으로 씁니다")
+    else:
+        st.button("이 논문을 기준 논문으로", key=f"anc{pid}", type="tertiary", on_click=db.set_anchor, args=(con, pid),
+                  help="프로젝트에 하나. 이 연구가 출발점으로 삼는 논문(설계·측정을 빌려 오고 차이를 밝힐 논문)")
     def save():
         r, note = st.session_state.get(f"kr{pid}"), st.session_state.get(f"krn{pid}", "").strip()
         con.execute("UPDATE papers SET key_role=?, key_role_note=? WHERE id=?", (r, (note or None) if r else None, pid))
